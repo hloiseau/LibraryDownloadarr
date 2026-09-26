@@ -14,10 +14,19 @@ profiles = [('720p-2', 1280, 720, 2000), ('720p-4', 1280, 720, 4000), ('1080p-8'
 for quality, width, height, bitrate in profiles:
     params = {'path': '/library/metadata/1', 'context': 'static', 'mediaIndex': 0, 'partIndex': 0,
               'protocol': 'http', 'directPlay': 0, 'directStream': 0, 'directStreamAudio': 0,
-              'videoBitrate': bitrate, 'videoResolution': f'{width}x{height}', 'videoQuality': 100,
+              'videoBitrate': bitrate, 'maxVideoBitrate': bitrate, 'videoResolution': f'{width}x{height}', 'videoQuality': 100,
               'audioChannelCount': 2, 'subtitles': 'burn', 'advancedSubtitles': 'burn',
               'autoAdjustQuality': 0, 'X-Plex-Client-Profile-Extra': extra,
               'session': 'librarydownloadarr-live-' + quality}
+    if quality == '720p-2':
+        for variant in [{}, {'maxVideoBitrate': bitrate}, {'hasMDE': 1}, {'maxVideoBitrate': bitrate, 'hasMDE': 1}]:
+            probe_params = {k: v for k, v in params.items() if k != 'maxVideoBitrate'}
+            probe_params.update(variant)
+            url = base + '/video/:/transcode/universal/decision?' + urllib.parse.urlencode(probe_params)
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as res:
+                container = json.load(res)['MediaContainer']
+            media = container['Metadata'][0]['Media'][0]
+            print('PARAMETER PROBE', json.dumps(variant), json.dumps({k: media.get(k) for k in ['width', 'height', 'bitrate', 'container']}), flush=True)
     query = urllib.parse.urlencode(params)
     url = base + '/video/:/transcode/universal/decision?' + query
     with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as res:
