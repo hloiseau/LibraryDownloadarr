@@ -6,6 +6,7 @@ import { api } from '../services/api';
 import { MediaItem, DownloadQuality, DownloadPolicy } from '../types';
 import { useDownloads } from '../contexts/DownloadContext';
 import { useMobileMenu } from '../hooks/useMobileMenu';
+import { ProgressBar, preparationLabel } from '../components/PreparationProgress';
 
 export const MediaDetail: React.FC = () => {
   const { ratingKey } = useParams<{ ratingKey: string }>();
@@ -97,15 +98,19 @@ export const MediaDetail: React.FC = () => {
 
   const downloadLabel = (partKey: string): string => {
     const item = downloads.find(d => d.partKey === partKey);
-    if (item?.status === 'preparing') return 'Preparing…';
+    if (item?.status === 'preparing') return item.preparationProgress != null
+      && ['processing', 'finalizing'].includes(item.preparationStage || '')
+      ? `${preparationLabel(item.preparationStage)} ${item.preparationProgress}%` : preparationLabel(item.preparationStage);
     if (item?.status === 'ready') return 'Ready — save above';
     if (item?.status === 'sending') return 'Starting…';
     return `${item?.progress || 0}%`;
   };
 
   // Helper function to get download progress for a given part
-  const getDownloadProgress = (partKey: string): number => {
+  const getDownloadProgress = (partKey: string): number | null => {
     const download = downloads.find(d => d.partKey === partKey);
+    if (download?.status === 'preparing') return download.preparationProgress || null;
+    if (download?.status === 'ready' || download?.status === 'sending') return 100;
     return download?.progress || 0;
   };
 
@@ -381,10 +386,7 @@ export const MediaDetail: React.FC = () => {
                                   </button>
                                   {isDownloading(track.Media![0].Part[0].key) && (
                                     <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
-                                      <div
-                                        className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
-                                        style={{ width: `${getDownloadProgress(track.Media![0].Part[0].key)}%` }}
-                                      />
+                                      <ProgressBar progress={getDownloadProgress(track.Media![0].Part[0].key)} label="Download preparation" />
                                     </div>
                                   )}
                                 </div>
@@ -443,10 +445,7 @@ export const MediaDetail: React.FC = () => {
                                   </button>
                                   {isDownloading(episode.Media![0].Part[0].key) && (
                                     <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
-                                      <div
-                                        className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
-                                        style={{ width: `${getDownloadProgress(episode.Media![0].Part[0].key)}%` }}
-                                      />
+                                      <ProgressBar progress={getDownloadProgress(episode.Media![0].Part[0].key)} label="Download preparation" />
                                     </div>
                                   )}
                                 </div>
@@ -549,10 +548,7 @@ export const MediaDetail: React.FC = () => {
                                             </button>
                                             {isDownloading(episode.Media![0].Part[0].key) && (
                                               <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
-                                                <div
-                                                  className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
-                                                  style={{ width: `${getDownloadProgress(episode.Media![0].Part[0].key)}%` }}
-                                                />
+                                                <ProgressBar progress={getDownloadProgress(episode.Media![0].Part[0].key)} label="Download preparation" />
                                               </div>
                                             )}
                                           </div>
@@ -609,10 +605,7 @@ export const MediaDetail: React.FC = () => {
                                     </button>
                                     {isDownloading(part.key) && (
                                       <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
-                                        <div
-                                          className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
-                                          style={{ width: `${getDownloadProgress(part.key)}%` }}
-                                        />
+                                        <ProgressBar progress={getDownloadProgress(part.key)} label="Download preparation" />
                                       </div>
                                     )}
                                   </div>

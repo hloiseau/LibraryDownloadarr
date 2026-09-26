@@ -121,6 +121,17 @@ https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36256485663
 
 ## Behavior
 
+Preparation now has a visible progress bar, elapsed time, and explicit waiting,
+conversion and finalization stages. Progress comes from the requesting user's
+Download Queue items, including `TranscodeSession.progress`; no global server
+session access or administrator token is needed. For seasons, progress is
+weighted by episode duration when all durations are available, otherwise by file
+count. Missing percentages use an indeterminate animation instead of invented
+progress. Only verified ready files reach 100%; transfer after Save file is
+tracked by the browser's download manager. Regression coverage includes 34 backend
+tests and 11 frontend tests; the progress UI is not yet independently tested on
+the live NAS.
+
 Select Original, 720p / 2 Mbps, 720p / 4 Mbps or 1080p / 8 Mbps on a media page.
 Plex prepares the selected video as an H.264/AAC MP4. When preparation finishes,
 click **Save file**. The browser's download manager handles the transfer directly;
