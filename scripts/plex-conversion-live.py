@@ -5,6 +5,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+import uuid
 
 base = 'http://127.0.0.1:32400'
 headers = {'Accept': 'application/json', 'X-Plex-Client-Identifier': 'librarydownloadarr-live-test',
@@ -19,15 +20,26 @@ for quality, width, height, bitrate in profiles:
               'autoAdjustQuality': 0, 'X-Plex-Client-Profile-Extra': extra,
               'session': 'librarydownloadarr-live-' + quality}
     if quality == '720p-2':
-        for variant in [{}, {'maxVideoBitrate': bitrate}, {'hasMDE': 1}, {'maxVideoBitrate': bitrate, 'hasMDE': 1}]:
+        caps = '+'.join([
+            'add-limitation(scope=videoCodec&scopeName=*&type=upperBound&name=video.width&value=1920&isRequired=true)',
+            'add-limitation(scope=videoCodec&scopeName=*&type=upperBound&name=video.height&value=1080&isRequired=true)',
+            'add-limitation(scope=videoCodec&scopeName=h264&type=match&name=video.profile&list=baseline|main|high)',
+        ])
+        for variant in [{}, {'maxVideoBitrate': bitrate}, {'hasMDE': 1}, {'maxVideoBitrate': bitrate, 'hasMDE': 1},
+                        {'maxVideoBitrate': bitrate, 'videoQuality': 99},
+                        {'maxVideoBitrate': bitrate, 'X-Plex-Client-Profile-Extra': extra + '+' + caps}]:
             probe_params = {k: v for k, v in params.items() if k != 'maxVideoBitrate'}
             probe_params.update(variant)
+            probe_id = str(uuid.uuid4())
+            probe_params['session'] = probe_id
+            probe_headers = {**headers, 'X-Plex-Client-Identifier': probe_id}
             url = base + '/video/:/transcode/universal/decision?' + urllib.parse.urlencode(probe_params)
-            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as res:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=probe_headers), timeout=60) as res:
                 container = json.load(res)['MediaContainer']
             media = container['Metadata'][0]['Media'][0]
             print('PARAMETER PROBE', json.dumps(variant), json.dumps({k: media.get(k) for k in ['width', 'height', 'bitrate', 'container']}), flush=True)
     query = urllib.parse.urlencode(params)
+    headers['X-Plex-Client-Identifier'] = str(uuid.uuid4())
     url = base + '/video/:/transcode/universal/decision?' + query
     with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as res:
         decision = json.load(res)

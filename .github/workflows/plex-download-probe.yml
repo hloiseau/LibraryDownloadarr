@@ -35,5 +35,5 @@ jobs:
       - name: Read relevant server diagnostics and stop server
         if: always()
         run: |
-          sudo grep -E 'ERROR|WARN|[Ss]canner|[Aa]gent|TranscodeUniversalRequest|client profile|ClientProfileExtra|MDE:|DownloadQueue|download queue' '/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Logs/Plex Media Server.log' | tail -100 || true
+          sudo grep -E 'ERROR|WARN|[Rr]esolution|[Bb]itrate|[Ll]imitation|TranscodeUniversalRequest|client profile|ClientProfileExtra|MDE:|DownloadQueue|download queue' '/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Logs/Plex Media Server.log' | tail -180 || true
           sudo systemctl stop plexmediaserver || true
