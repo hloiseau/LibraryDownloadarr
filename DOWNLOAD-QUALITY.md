@@ -1,7 +1,8 @@
 # Download quality preview
 
 This branch implements quality selection for movies, episodes and season ZIPs.
-It is an experimental integration awaiting validation with a real Plex server.
+It is an experimental integration awaiting an authenticated end-to-end download
+test. The decision request has been checked on a real Linux Plex server.
 Original and audio downloads remain available subject to the new download permissions.
 
 ## Connection and download permissions
@@ -78,6 +79,11 @@ The universal playback endpoint also reduced the 2-Mbps test to 720×404 despite
 a 1280×720 maximum, logging a bitrate-driven playback-quality reduction. This
 does not establish Download Queue's final resolution. No speculative bitrate or
 client-capability changes were added to the fix; quality remains a maximum.
+An additional direct `start.mp4` smoke test reached the transcoder but failed
+when PMS tried to open an empty output path. No complete converted file was
+obtained; this separate playback endpoint does not validate Download Queue.
+The unsuccessful encoding run is recorded at:
+https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36255528410
 
 ## Behavior
 
@@ -130,9 +136,11 @@ the error response; go back to the app to retry.
 
 ## Try the updated preview on your computer
 
-Published application commit: `28fb1f5`. All 27 backend tests and seven frontend
-tests passed in this Docker build. Anonymous image access was verified. Build:
-https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36252946516
+Published application commit: `85505d0`. All 28 backend tests and seven frontend
+tests pass; both production builds pass. The Docker build reran the backend
+tests and reused the unchanged, previously tested frontend layer. Anonymous
+image access was verified. Build:
+https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36255594669
 
 To keep an earlier test container intact, launch this version on port 5071 with
 its own persistent data volume:
