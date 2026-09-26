@@ -100,6 +100,7 @@ export class PlexService {
   private getAxiosConfig(headers?: any): any {
     return {
       headers,
+      timeout: 30000, maxRedirects: 0,
       httpsAgent: this.httpsAgent
     };
   }
@@ -165,7 +166,7 @@ export class PlexService {
       await axios.get(`${this.plexUrl}/`, this.getAxiosConfig());
       return true;
     } catch (error) {
-      logger.error('Failed to connect to Plex server', { error });
+      logger.error('Failed to connect to Plex server');
       return false;
     }
   }
@@ -181,88 +182,42 @@ export class PlexService {
       }));
       return true;
     } catch (error) {
-      logger.error('Failed to test connection with provided credentials', { error });
+      logger.error('Failed to test connection with provided credentials');
       return false;
     }
   }
 
   // OAuth PIN Flow - using direct axios calls as these are Plex.tv APIs, not server APIs
-  async generatePin(): Promise<PlexPinResponse> {
-    try {
-      const response = await axios.post(
-        'https://plex.tv/api/v2/pins?strong=true',
-        {},
-        {
-          headers: {
-            Accept: 'application/json',
-            'X-Plex-Product': config.plex.product,
-            'X-Plex-Client-Identifier': config.plex.clientIdentifier,
-          },
-        }
-      );
-
-      return {
-        id: response.data.id,
-        code: response.data.code,
-      };
-    } catch (error) {
-      logger.error('Failed to generate Plex PIN', { error });
-      throw new Error('Failed to generate Plex PIN');
-    }
+  async generatePin(clientIdentifier = config.plex.clientIdentifier): Promise<PlexPinResponse> {
+    const response = await axios.post('https://plex.tv/api/v2/pins', {}, {
+      timeout: 15000, params: { strong: true },
+      headers: { Accept: 'application/json', 'X-Plex-Product': config.plex.product,
+        'X-Plex-Client-Identifier': clientIdentifier },
+    });
+    return { id: response.data.id, code: response.data.code };
   }
 
-  async checkPin(pinId: number): Promise<PlexAuthResponse | null> {
-    try {
-      const response = await axios.get(`https://plex.tv/api/v2/pins/${pinId}`, {
-        headers: {
-          Accept: 'application/json',
-          'X-Plex-Client-Identifier': config.plex.clientIdentifier,
-        },
-      });
-
-      logger.debug('Plex PIN response', {
-        hasAuthToken: !!response.data.authToken,
-        userData: response.data,
-      });
-
-      if (response.data.authToken) {
-        let username = response.data.username || response.data.title || response.data.friendlyName;
-
-        try {
-          const userInfo = await this.getUserInfo(response.data.authToken);
-          username = userInfo.friendlyName || userInfo.friendly_name || userInfo.username || userInfo.title || username;
-          logger.debug('Fetched detailed user info', { username, userInfo });
-        } catch (error) {
-          logger.warn('Could not fetch detailed user info, using PIN data', { error });
-        }
-
-        if (!username) {
-          username = `plexuser_${response.data.id}`;
-        }
-
-        return {
-          authToken: response.data.authToken,
-          user: {
-            id: response.data.id,
-            uuid: response.data.id?.toString(),
-            email: response.data.email || '',
-            username: username,
-            title: response.data.title || username,
-            thumb: response.data.thumb || '',
-          },
-        };
-      }
-
-      return null;
-    } catch (error) {
-      logger.error('Failed to check Plex PIN', { error });
-      return null;
-    }
+  async checkPin(pinId: number, clientIdentifier = config.plex.clientIdentifier): Promise<PlexAuthResponse | null> {
+    const response = await axios.get(`https://plex.tv/api/v2/pins/${pinId}`, {
+      timeout: 15000,
+      headers: { Accept: 'application/json', 'X-Plex-Client-Identifier': clientIdentifier },
+    });
+    if (!response.data.authToken) return null;
+    // The PIN's id is NOT the account id. Fetch the authenticated user and use
+    // its immutable id, so app permissions survive every subsequent login.
+    const info = await this.getUserInfo(response.data.authToken);
+    if (!info.id) throw new Error('Plex did not return an account identity');
+    const username = info.username || info.title || info.friendlyName || `plexuser_${info.id}`;
+    return { authToken: response.data.authToken, user: {
+      id: info.id, uuid: `plex:${info.id}`, email: info.email || '', username,
+      title: info.title || username, thumb: info.thumb || '',
+    } };
   }
 
   async getUserInfo(token: string): Promise<any> {
     try {
       const response = await axios.get('https://plex.tv/api/v2/user', {
+        timeout: 15000, maxRedirects: 0,
         headers: {
           'X-Plex-Token': token,
           Accept: 'application/json',
@@ -270,7 +225,7 @@ export class PlexService {
       });
       return response.data;
     } catch (error) {
-      logger.error('Failed to get user info', { error });
+      logger.error('Failed to get Plex user info');
       throw new Error('Failed to get user info');
     }
   }
@@ -278,6 +233,7 @@ export class PlexService {
   async getUserServers(userToken: string): Promise<any[]> {
     try {
       const response = await axios.get('https://plex.tv/api/resources', {
+        timeout: 15000, maxRedirects: 0,
         headers: {
           'X-Plex-Token': userToken,
         },
@@ -321,8 +277,7 @@ export class PlexService {
       return [];
     } catch (error) {
       logger.error('Failed to get user servers', {
-        error,
-        message: error instanceof Error ? error.message : 'Unknown error'
+        message: 'Plex resource lookup failed'
       });
       throw new Error('Failed to get user servers');
     }
@@ -358,7 +313,7 @@ export class PlexService {
         targetServer = accessibleServers.find(s => s.clientIdentifier === targetMachineId);
       }
 
-      if (!targetServer && accessibleServers.length > 0) {
+      if (!targetMachineId && !targetServer && accessibleServers.length > 0) {
         targetServer = accessibleServers[0];
       }
 
@@ -413,8 +368,7 @@ export class PlexService {
       return { serverUrl: null, accessToken: null };
     } catch (error) {
       logger.error('Error finding best server connection', {
-        error,
-        message: error instanceof Error ? error.message : 'Unknown error',
+        message: 'Plex resource lookup failed',
         stack: error instanceof Error ? error.stack : undefined
       });
       return { serverUrl: null, accessToken: null };
@@ -463,7 +417,7 @@ export class PlexService {
         friendlyName: serverName
       };
     } catch (error) {
-      logger.error('Failed to get server identity', { error });
+      logger.error('Failed to get server identity');
       return null;
     }
   }
@@ -525,9 +479,12 @@ export class PlexService {
         'Accept': 'application/json',
       }));
 
-      return response.data?.MediaContainer?.Metadata || [];
+      const container = response.data?.MediaContainer;
+      return (container?.Metadata || []).map((item: any) => ({ ...item,
+        librarySectionID: item.librarySectionID ?? container.librarySectionID,
+        allowSync: [false, 0, '0'].includes(container.allowSync) ? false : item.allowSync }));
     } catch (error) {
-      logger.error('Failed to get library content', { error });
+      logger.error('Failed to get library content');
       throw new Error('Failed to get library content');
     }
   }
@@ -543,9 +500,12 @@ export class PlexService {
         'Accept': 'application/json',
       }));
 
-      return response.data?.MediaContainer?.Metadata?.[0];
+      const container = response.data?.MediaContainer;
+      const metadata = container?.Metadata?.[0];
+      return metadata && { ...metadata, librarySectionID: metadata.librarySectionID ?? container.librarySectionID,
+        allowSync: [false, 0, '0'].includes(container.allowSync) ? false : metadata.allowSync };
     } catch (error) {
-      logger.error('Failed to get media metadata', { error });
+      logger.error('Failed to get media metadata');
       throw new Error('Failed to get media metadata');
     }
   }
@@ -561,9 +521,12 @@ export class PlexService {
         'Accept': 'application/json',
       }));
 
-      return response.data?.MediaContainer?.Metadata || [];
+      const container = response.data?.MediaContainer;
+      return (container?.Metadata || []).map((item: any) => ({ ...item,
+        librarySectionID: item.librarySectionID ?? container.librarySectionID,
+        allowSync: [false, 0, '0'].includes(container.allowSync) ? false : item.allowSync }));
     } catch (error) {
-      logger.error('Failed to get seasons', { error });
+      logger.error('Failed to get seasons');
       throw new Error('Failed to get seasons');
     }
   }
@@ -579,9 +542,12 @@ export class PlexService {
         'Accept': 'application/json',
       }));
 
-      return response.data?.MediaContainer?.Metadata || [];
+      const container = response.data?.MediaContainer;
+      return (container?.Metadata || []).map((item: any) => ({ ...item,
+        librarySectionID: item.librarySectionID ?? container.librarySectionID,
+        allowSync: [false, 0, '0'].includes(container.allowSync) ? false : item.allowSync }));
     } catch (error) {
-      logger.error('Failed to get episodes', { error });
+      logger.error('Failed to get episodes');
       throw new Error('Failed to get episodes');
     }
   }
@@ -597,9 +563,12 @@ export class PlexService {
         'Accept': 'application/json',
       }));
 
-      return response.data?.MediaContainer?.Metadata || [];
+      const container = response.data?.MediaContainer;
+      return (container?.Metadata || []).map((item: any) => ({ ...item,
+        librarySectionID: item.librarySectionID ?? container.librarySectionID,
+        allowSync: [false, 0, '0'].includes(container.allowSync) ? false : item.allowSync }));
     } catch (error) {
-      logger.error('Failed to get tracks', { error });
+      logger.error('Failed to get tracks');
       throw new Error('Failed to get tracks');
     }
   }
@@ -625,7 +594,10 @@ export class PlexService {
         resultCount: response.data?.MediaContainer?.Metadata?.length || 0
       });
 
-      return response.data?.MediaContainer?.Metadata || [];
+      const container = response.data?.MediaContainer;
+      return (container?.Metadata || []).map((item: any) => ({ ...item,
+        librarySectionID: item.librarySectionID ?? container.librarySectionID,
+        allowSync: [false, 0, '0'].includes(container.allowSync) ? false : item.allowSync }));
     } catch (error: any) {
       logger.error('Failed to search', {
         error: error.message,

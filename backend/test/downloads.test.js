@@ -1,3 +1,4 @@
+const { assertDownloadPolicy } = require('../dist/services/downloadPolicy');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
@@ -17,7 +18,7 @@ const decision = (quality = '720p-2') => ({ MediaContainer: {
 function media(id) {
   return { ratingKey: String(id), type: id === '100' ? 'season' : id === '1' ? 'movie' : 'episode',
     title: `Title ${id}`, grandparentTitle: 'Show', parentTitle: 'Show', parentIndex: 1,
-    index: Number(id), duration: 60000, allowSync: true,
+    index: Number(id), librarySectionID: '1', duration: 60000, allowSync: true,
     Media: [{ Part: [{ key: `/library/parts/${id}/file.mkv`, duration: 60000 }] }] };
 }
 async function listen(server) {
@@ -38,6 +39,7 @@ async function fixture(t, options = {}) {
     const send = (body, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
     if (!['shared-token', 'other-token', 'admin-token'].includes(token)) return send({}, 401);
     if (state.denied) return send({}, 403);
+    if (url.pathname === '/identity') return send({ MediaContainer: { version: '1.43.0-test' } });
     if (url.pathname.startsWith('/library/metadata/')) {
       const id = url.pathname.split('/')[3];
       if (id === '999') return send({}, 403);
@@ -65,7 +67,7 @@ async function fixture(t, options = {}) {
       queue.items = queue.items.filter(item => !ids.includes(item.id));
       return send({});
     }
-    if (operation === 'items') return send({ MediaContainer: { DownloadQueueItem: queue.items.map(item => ({ ...item, status: state.status })) } });
+    if (operation === 'items') return send({ MediaContainer: { DownloadQueueItem: (state.missing ? [] : queue.items).map(item => ({ ...item, status: state.status, DecisionResult: state.decisionError })) } });
     if (action === 'decision') {
       const result = decision(queue.quality);
       if (state.wrongDecision) result.MediaContainer.Metadata[0].Media[0].Part[0].Stream[0].height = 2160;
@@ -188,8 +190,9 @@ test('MP4-only and maximum output size checks prevent wrong downloads', async t 
 async function application(t, f) {
   const sessions = new Map(['alice', 'bob'].map(name => [`session-${name}`, { id: name, userId: name, token: `session-${name}` }]));
   const logs = [];
+  const settings = { plex_url: f.credentials.serverUrl, plex_token: 'admin-token', plex_machine_id: 'server-1' };
   const db = {
-    getSetting: key => ({ plex_url: f.credentials.serverUrl, plex_token: 'admin-token' })[key],
+    getSetting: key => settings[key],
     getSessionByToken: token => sessions.get(token), getAdminUserById: () => undefined,
     getPlexUserById: id => ({ id, username: id, isAdmin: false, plexToken: id === 'alice' ? 'shared-token' : 'other-token' }),
     logDownload: (...args) => logs.push(args),
@@ -200,7 +203,7 @@ async function application(t, f) {
   t.after(() => new Promise(resolve => server.close(resolve)));
   const call = (path, options = {}, user = 'alice') => fetch(`${url}/api/downloads${path}`, { ...options,
     headers: { Authorization: `Bearer session-${user}`, 'Content-Type': 'application/json', ...options.headers } });
-  return { call, sessions, logs };
+  return { call, sessions, logs, settings };
 }
 
 test('native ticket streams a file, is single-use and respects session revocation', async t => {
@@ -250,4 +253,56 @@ test('refreshed credentials replace the original token on every request', async 
   const queueReads = f.requests.filter(r => r.method === 'GET' && r.path.includes('/downloadQueue/'));
   assert.ok(queueReads.length > 0);
   assert.ok(queueReads.every(r => r.token === 'other-token'));
+});
+
+
+test('Plex queue error exposes decision and PMS version without tokens', async t => {
+  const f = await fixture(t, { status: 'error', decisionError: {
+    generalDecisionCode: 4005, generalDecisionText: 'Conversion failed: encoder unavailable; X-Plex-Token=shared-token at http://plex:32400/file?token=other-secret',
+  } });
+  const job = await f.service.create('alice', f.credentials, request);
+  const result = await f.service.status(job.id, 'alice', f.credentials);
+  assert.equal(result.state, 'error');
+  assert.match(result.error, /general 4005: Conversion failed: encoder unavailable/);
+  assert.match(result.error, /PMS 1.43.0-test/);
+  assert.doesNotMatch(result.error, /shared-token|other-secret|http:\/\/plex/);
+});
+
+test('temporarily missing queue item is retried, while expiry is reported distinctly', async t => {
+  const f = await fixture(t, { missing: true });
+  const job = await f.service.create('alice', f.credentials, request);
+  assert.equal((await f.service.status(job.id, 'alice', f.credentials)).state, 'preparing');
+  f.state.missing = false; f.state.status = 'available';
+  assert.equal((await f.service.status(job.id, 'alice', f.credentials)).state, 'ready');
+  await f.service.cancel(job.id, 'alice');
+  f.state.status = 'expired';
+  const next = await f.service.create('alice', f.credentials, request);
+  assert.match((await f.service.status(next.id, 'alice', f.credentials)).error, /expired/);
+});
+
+test('app policy blocks quality and library, and revocation prevents ticket delivery', async t => {
+  const f = await fixture(t, { status: 'available' });
+  const app = await application(t, f);
+  const policy = { enabled: true, libraries: ['1'], qualities: ['720p-2'], serverId: 'server-1' };
+  const save = value => { app.settings['download_policy:alice'] = JSON.stringify(value); };
+  save(policy);
+  assert.equal((await app.call('', { method: 'POST', body: JSON.stringify({ ...request, quality: '1080p-8' }) })).status, 403);
+  save({ ...policy, libraries: ['2'] });
+  assert.equal((await app.call('', { method: 'POST', body: JSON.stringify(request) })).status, 403);
+  save(policy);
+  const created = await app.call('', { method: 'POST', body: JSON.stringify(request) });
+  assert.equal(created.status, 202); const job = await created.json();
+  const ticket = (await (await app.call(`/${job.id}/ticket`, { method: 'POST' })).json()).ticket;
+  save({ ...policy, enabled: false });
+  const response = await app.call(`/${job.id}/file`, { method: 'POST', body: JSON.stringify({ ticket }) });
+  assert.equal(response.status, 403);
+  assert.ok(!f.requests.some(r => r.path.endsWith('/media')));
+});
+
+test('restricted season checks every episode library before queue creation', async t => {
+  const f = await fixture(t);
+  const db = { getSetting: key => key === 'download_policy:alice' ? JSON.stringify({ enabled: true, qualities: ['720p-2'], libraries: ['2'], serverId: '' }) : '' };
+  const credentials = { ...f.credentials, authorize: (quality, item, container) => assertDownloadPolicy(db, { id: 'alice', isAdmin: false }, quality, item, container) };
+  await assert.rejects(f.service.create('alice', credentials, { ratingKey: '100', quality: '720p-2', season: true }), { status: 403 });
+  assert.ok(!f.requests.some(r => r.path === '/downloadQueue'));
 });

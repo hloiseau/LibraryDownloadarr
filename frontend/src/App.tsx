@@ -7,6 +7,7 @@ import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { LibraryView } from './pages/LibraryView';
 import { MediaDetail } from './pages/MediaDetail';
+import { Permissions } from './pages/Permissions';
 import { Settings } from './pages/Settings';
 import { SearchResults } from './pages/SearchResults';
 import { DownloadHistory } from './pages/DownloadHistory';
@@ -127,6 +128,7 @@ const App: React.FC = () => {
                 </ProtectedRoute>
               }
             />
+            <Route path="/admin/permissions" element={<ProtectedRoute><Permissions /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </>
         )}

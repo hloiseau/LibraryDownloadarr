@@ -8,12 +8,15 @@ export const DOWNLOAD_PROFILES = {
   '1080p-8': { label: '1080p · 8 Mbps', width: 1920, height: 1080, bitrate: 8000 },
 } as const;
 export type DownloadQuality = keyof typeof DOWNLOAD_PROFILES;
-export interface DownloadCredentials { serverUrl: string; token: string }
+export interface DownloadCredentials {
+  serverUrl: string; token: string;
+  authorize?: (quality: DownloadQuality, metadata: any, container: any) => void;
+}
 export interface DownloadRequest { ratingKey: string; quality: DownloadQuality; partKey?: string; season?: boolean }
 export class DownloadError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
-interface QueueFile { id: number; ratingKey: string; filename: string; verified: boolean; maxBytes?: number }
+interface QueueFile { id: number; ratingKey: string; filename: string; verified: boolean; maxBytes?: number; missingCount?: number }
 interface DownloadJob {
   id: string;
   owner: string;
@@ -54,12 +57,33 @@ export function downloadCredentials(
   return { serverUrl, token };
 }
 
+// Plex can include paths or credentials in diagnostic text. Only expose known
+// decision fields; never serialize an Axios request, headers, or raw response.
+export function plexDecisionSummary(value: any, secrets: string[] = []): string {
+  const decision = Array.isArray(value?.DecisionResult) ? value.DecisionResult[0] : value?.DecisionResult || value;
+  if (!decision || typeof decision !== 'object') return '';
+  const clean = (text: string) => {
+    for (const secret of secrets.filter(Boolean)) text = text.split(secret).join('[redacted]').split(encodeURIComponent(secret)).join('[redacted]');
+    return text.replace(/https?:\/\/[^\s<>"']+/gi, '[URL]')
+      .replace(/((?:X-Plex-Token|authToken|accessToken|token)\s*[=:]\s*)[^\s&;,]+/gi, '$1[redacted]')
+      .replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 240);
+  };
+  return ['transcode', 'general', 'directPlay', 'directStream'].flatMap(kind => {
+    const code = decision[`${kind}DecisionCode`];
+    const text = decision[`${kind}DecisionText`];
+    if (!Number.isInteger(Number(code)) || code === undefined || Number(code) < 0 || Number(code) > 99999) return [];
+    return [`${kind} ${Number(code)}${typeof text === 'string' && text ? `: ${clean(text)}` : ''}`];
+  }).join('; ').slice(0, 700);
+}
+
 export function downloadFailure(error: unknown): DownloadError {
   if (error instanceof DownloadError) return error;
   if (axios.isAxiosError(error)) {
     const status = error.response?.status;
     if (status === 401 || status === 403) return new DownloadError(403, 'Plex denied this download. Check your account access, download permission and Plex download entitlement.');
     if (status === 404 || status === 405) return new DownloadError(502, 'Plex could not find this download or does not support Download Queue. Plex Media Server 1.41.9 or newer is required.');
+    const details = plexDecisionSummary(error.response?.data?.MediaContainer, [String(error.config?.headers?.['X-Plex-Token'] || '')]);
+    if (details) return new DownloadError(502, `Plex refused preparation: ${details}`);
     if (status === 503) return new DownloadError(503, 'Plex is still preparing the file. Please try again.');
   }
   // Axios errors include request headers and tokens: never return or log them.
@@ -172,6 +196,7 @@ export class DownloadService {
       const root = container?.Metadata?.[0];
       if (!root) throw new DownloadError(404, 'Media unavailable for your Plex account.');
       checkPermission(container, root);
+      credentials.authorize?.(input.quality, root, container);
       let items = [root];
       if (input.season) {
         if (root.type !== 'season') throw new DownloadError(400, 'Select a season.');
@@ -187,6 +212,7 @@ export class DownloadService {
       }
       for (const item of items) {
         checkPermission({}, item);
+        credentials.authorize?.(input.quality, item, { librarySectionID: root.librarySectionID ?? container.librarySectionID });
         if (!['movie', 'episode'].includes(item.type) || !/^\d+$/.test(String(item.ratingKey)) || !item.Media?.length) {
           throw new DownloadError(400, 'Quality selection supports movies and episodes with available media.');
         }
@@ -259,7 +285,32 @@ export class DownloadService {
       let ready = 0;
       for (const file of job.files) {
         const entry = entries.find((item: any) => Number(item.id) === file.id);
-        if (!entry || ['error', 'expired'].includes(entry.status)) throw new DownloadError(502, 'Plex could not prepare a file. Check the Plex transcoder and temporary storage.');
+        if (!entry) {
+          file.missingCount = (file.missingCount || 0) + 1;
+          if (file.missingCount < 4) continue;
+          throw new DownloadError(502, 'Plex no longer lists this file in its download queue. Prepare the download again.');
+        }
+        file.missingCount = 0;
+        if (entry.status === 'expired') throw new DownloadError(410, 'Plex expired the prepared file. Prepare the download again.');
+        if (entry.status === 'error') {
+          const secrets = [String(job.client.defaults.headers['X-Plex-Token'] || '')];
+          let detail = plexDecisionSummary(entry, secrets);
+          if (!detail) {
+            try {
+              const decision = await job.client.get(`/downloadQueue/${job.queueId}/item/${file.id}/decision`);
+              detail = plexDecisionSummary(decision.data.MediaContainer, secrets);
+            } catch (error) {
+              if (axios.isAxiosError(error)) detail = plexDecisionSummary(error.response?.data?.MediaContainer, secrets);
+            }
+          }
+          let version = '';
+          try {
+            const identity = await job.client.get('/identity');
+            const value = identity.data.MediaContainer?.version;
+            if (typeof value === 'string' && /^[a-zA-Z0-9.\-]{1,60}$/.test(value)) version = `, PMS ${value}`;
+          } catch { /* Diagnostic lookup must not hide the queue failure. */ }
+          throw new DownloadError(502, `Plex download failed (status error${version}, ${job.quality}). ${detail || 'Plex supplied no decision reason. Check the Plex Media Server logs at the time of this download.'}`);
+        }
         if (entry.status === 'available') {
           if (!file.verified) {
             const result = await job.client.get(`/downloadQueue/${job.queueId}/item/${file.id}/decision`);
@@ -298,6 +349,7 @@ export class DownloadService {
         const metadata = result.data.MediaContainer?.Metadata?.[0];
         if (!metadata) throw new DownloadError(403, 'Media access has been removed.');
         checkPermission(result.data.MediaContainer, metadata);
+        credentials.authorize?.(job.quality, metadata, result.data.MediaContainer);
         const decision = await job.client.get(`/downloadQueue/${job.queueId}/item/${file.id}/decision`, { signal: job.transfer.signal });
         verifyDecision(decision.data.MediaContainer, job.quality);
       }

@@ -1,4 +1,8 @@
 import express from 'express';
+import { randomUUID } from 'crypto';
+import { PlexAuthFlows } from './services/plexAuthFlow';
+import { plexService } from './services/plexService';
+import { createPermissionsRouter } from './routes/permissions';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -47,10 +51,14 @@ app.get('/api/health', (_req, res) => {
 });
 
 // Routes
-app.use('/api/auth', createAuthRouter(db));
+const clientId = db.getSetting('plex_client_identifier') || randomUUID();
+db.setSetting('plex_client_identifier', clientId);
+const plexFlows = new PlexAuthFlows(plexService, clientId);
+app.use('/api/auth', createAuthRouter(db, plexFlows));
 app.use('/api/libraries', createLibrariesRouter(db));
 app.use('/api/media', createMediaRouter(db));
-app.use('/api/settings', createSettingsRouter(db));
+app.use('/api/settings', createSettingsRouter(db, plexFlows));
+app.use('/api/permissions', createPermissionsRouter(db));
 app.use('/api/logs', createLogsRouter(db));
 const downloads = createDownloadsRouter(db);
 app.use('/api/downloads', downloads.router);

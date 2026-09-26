@@ -2,7 +2,51 @@
 
 This branch implements quality selection for movies, episodes and season ZIPs.
 It is an experimental integration awaiting validation with a real Plex server.
-Original downloads and audio downloads keep their existing behavior.
+Original and audio downloads remain available subject to the new download permissions.
+
+## Connection and download permissions
+
+1. Create the local administrator once, then open **Settings → Connect with Plex**.
+2. Authorize using the Plex server owner's account. Select the server and an
+   address reachable from this app (normally the NAS LAN address and Plex port).
+   No manual token extraction is needed. Manual setup remains under Advanced.
+3. Friends open the app and choose **Sign in with Plex** using their own accounts.
+   They must already have access to the exact configured server in Plex.
+4. Open **Download permissions** as administrator. Set default download rules,
+   or override them for an individual friend after their first sign-in. You can
+   disable downloads, select libraries, and allow only chosen quality profiles.
+   Disable **Original file** to require video conversion. Audio requires Original.
+
+These are restrictions on downloads through this app, not changes to Plex's
+library visibility or sharing. They cannot grant access or download entitlement
+that Plex denies. Defaults allow all Plex-authorized downloads unless changed;
+individual rules replace defaults. Rules apply to original files, album/season
+ZIPs and converted files, and are rechecked before converted bytes are delivered.
+Transfers already in progress are not interrupted. Rules tied to a different
+Plex server fail closed until an administrator saves them for the current server.
+
+This update invalidates existing Plex-user app sessions once: old versions used
+the temporary login PIN id as the account identity. Friends must sign in again
+before they appear in the permissions page. Administrator sessions, configuration
+and historical download records are retained; historical duplicate account rows
+are not silently merged. Future logins use the verified Plex account id, so rules
+survive logouts and restarts. Owner authorization flows are bound to the admin
+session; Plex tokens stay on the backend.
+
+## Diagnosing a failed conversion
+
+The previous message “Plex could not prepare a file. Check the Plex transcoder
+and temporary storage.” did not identify a cause. It also treated missing queue
+entries, expired files, and Plex conversion errors as the same failure.
+
+Errors now show the queue state, chosen quality, PMS version when available, and
+Plex's decision code/text (with known tokens and URLs redacted). Missing entries
+are retried briefly. Expired files have their own message. If Plex reports an error
+without a reason, inspect the Plex Media Server logs for that attempt. A successful
+conversion decision followed by queue failure can still require Plex logs.
+
+The new diagnostics are not a confirmed fix for the reported NAS conversion
+failure. The real server's reason is needed before choosing a transcoder change.
 
 ## Behavior
 
@@ -57,14 +101,13 @@ the error response; go back to the app to retry.
 
 Use `deploy/truenas-quality.yaml` as the Custom App YAML. Before deployment:
 
-1. The template pins the image built from commit `8b6e625` on 2026-09-26.
-   Its GitHub Actions build passed all 11 tests and anonymous registry access
-   was verified. The mutable convenience tag is `quality-preview`.
-   For future builds, update the pinned digest after verifying publication.
+1. The template pins a verified image digest. The mutable convenience tag is
+   `quality-preview`; pull it again and recreate the container when updating.
+   Check the pinned digest and branch build status before a new deployment.
 2. Replace `NAS_LAN_IP` and `/mnt/POOL/...` using the NAS's actual configuration.
    Create dedicated app data/log datasets and keep any existing installation intact.
 3. Deploy as `librarydownloadarr-quality` on port 5070, then set up the app's
-   administrator and configure the existing Plex server through its Settings.
+   administrator and use **Settings → Connect with Plex**.
 4. Sign in with a shared Plex account for the permission test.
 
 The A310 stays assigned to Plex. Confirm Plex's existing hardware acceleration
@@ -101,7 +144,11 @@ npm run build
 The Node test suite uses a mock Plex HTTP server and real Express routes to check
 quality parameters, queue state transitions, ownership, permission revocation,
 no original fallback, cancellation, one-use session-bound tickets, MP4 streaming
-and season ZIP contents. It does not validate a real PMS transcode or GPU use.
+and season ZIP contents. Additional tests cover stable account identity, strict
+server selection, session-bound owner setup, migration, default/user policies,
+original and bulk-route enforcement, and safe diagnostics. These use SQLite,
+Express and simulated Plex responses; they do not validate live Plex OAuth,
+a real PMS transcode or GPU use.
 
 References:
 - https://developer.plex.tv/pms/ (Download Queue and Profile Augmentations)

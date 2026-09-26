@@ -1,4 +1,4 @@
-import { DownloadQuality, PreparedDownload } from '../types';
+import { DownloadQuality, PreparedDownload, DownloadPolicy, PermissionUser, PlexServerChoice } from '../types';
 import axios, { AxiosInstance } from 'axios';
 import {
   User,
@@ -66,9 +66,9 @@ class ApiClient {
     return response.data;
   }
 
-  async authenticatePlexPin(pinId: number): Promise<AuthResponse> {
-    const response = await this.client.post<AuthResponse>('/auth/plex/authenticate', { pinId });
-    return response.data;
+  async authenticatePlexPin(flowId: string): Promise<AuthResponse | null> {
+    const response = await this.client.post('/auth/plex/authenticate', { flowId });
+    return response.status === 202 ? null : response.data;
   }
 
   async getCurrentUser(): Promise<User> {
@@ -86,6 +86,26 @@ class ApiClient {
       currentPassword,
       newPassword,
     });
+  }
+
+  async connectPlexOwner(): Promise<PlexPin> {
+    return (await this.client.post('/settings/plex/connect')).data;
+  }
+  async getPlexOwnerServers(flowId: string): Promise<PlexServerChoice[] | null> {
+    const response = await this.client.post('/settings/plex/servers', { flowId });
+    return response.status === 202 ? null : response.data.servers;
+  }
+  async selectPlexServer(flowId: string, serverId: string, url: string): Promise<void> {
+    await this.client.post('/settings/plex/select', { flowId, serverId, url });
+  }
+  async getMyDownloadPolicy(): Promise<DownloadPolicy> {
+    return (await this.client.get('/permissions/me')).data;
+  }
+  async getPermissions(): Promise<{ defaultPolicy: DownloadPolicy; users: PermissionUser[] }> {
+    return (await this.client.get('/permissions')).data;
+  }
+  async saveDownloadPolicy(id: string, policy: DownloadPolicy | { inherit: true }): Promise<void> {
+    await this.client.put(`/permissions/${encodeURIComponent(id)}`, policy);
   }
 
   // Library endpoints

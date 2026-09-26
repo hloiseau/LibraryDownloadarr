@@ -765,3 +765,18 @@ fall back to original media or an admin Plex token for a shared user. Converted
 files stream through the native browser downloader; original paths are unchanged.
 See `DOWNLOAD-QUALITY.md` for lifecycle limits and the required live NAS pilot.
 Run `cd backend && npm test` and the frontend build before committing.
+
+## Plex connection and app download permissions
+
+The quality preview now uses `PlexAuthFlows` with a persistent installation client
+id and five-minute flow handles. Owner setup is bound to the local admin session.
+Plex users are keyed by the authenticated `/api/v2/user` id (`plex:<id>`), never a
+PIN id; old Plex-user sessions are invalidated once. `/auth/me` must not expose
+Plex tokens. Shared users must have access to the exact configured server.
+
+`downloadPolicy.ts` stores defaults and per-user overrides in settings, bound to
+the configured server id. `/api/permissions` is admin-only; `/me` returns the
+caller's effective policy. Enforce rules on ALL original and converted routes,
+including ZIPs and again before handing out prepared media. These rules restrict
+downloads, not Plex library visibility. Do not cache `/api/` in the service worker.
+Plex failures expose only whitelisted, redacted decision text and codes.

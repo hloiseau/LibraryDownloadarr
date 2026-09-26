@@ -5,6 +5,7 @@ import { pipeline, finished } from 'stream/promises';
 import { DatabaseService } from '../models/database';
 import { AuthRequest, createAuthMiddleware } from '../middleware/auth';
 import { DownloadService, downloadCredentials, downloadFailure, DownloadError } from '../services/downloadService';
+import { assertDownloadPolicy } from '../services/downloadPolicy';
 import { logger } from '../utils/logger';
 
 export function createDownloadsRouter(db: DatabaseService, service = new DownloadService()) {
@@ -13,7 +14,10 @@ export function createDownloadsRouter(db: DatabaseService, service = new Downloa
   // Single-use, 60-second tickets allow a native browser POST straight to disk.
   // Neither Plex tokens nor app session tokens are exposed in download URLs.
   const tickets = new Map<string, { jobId: string; owner: string; session: string; expires: number }>();
-  const credentials = (req: AuthRequest) => downloadCredentials(key => db.getSetting(key), req.user!);
+  const credentials = (req: AuthRequest) => ({
+    ...downloadCredentials(key => db.getSetting(key), req.user!),
+    authorize: (quality: any, metadata: any, container: any) => assertDownloadPolicy(db, req.user!, quality, metadata, container),
+  });
   const failure = (res: Response, error: unknown) => {
     const safe = downloadFailure(error);
     if (!res.headersSent) res.status(safe.status).json({ error: safe.message });

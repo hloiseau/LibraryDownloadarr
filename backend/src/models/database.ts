@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { randomBytes, randomUUID } from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger';
@@ -140,6 +141,12 @@ export class DatabaseService {
       )
     `);
 
+    // Old versions used PIN ids as account ids. Keep history, but require those
+    // legacy sessions to sign in again with a stable, verified Plex identity.
+    if (!this.getSetting('plex_identity_version')) {
+      this.db.exec('DELETE FROM sessions WHERE user_id IN (SELECT id FROM plex_users)');
+      this.setSetting('plex_identity_version', '2');
+    }
     logger.info('Database tables initialized');
   }
 
@@ -223,6 +230,14 @@ export class DatabaseService {
     const stmt = this.db.prepare('SELECT * FROM plex_users WHERE id = ?');
     const row = stmt.get(id) as any;
     return row ? this.mapPlexUser(row) : undefined;
+  }
+
+  listPlexUsers(): User[] {
+    return (this.db.prepare("SELECT * FROM plex_users WHERE plex_id LIKE 'plex:%' ORDER BY username").all() as any[]).map(row => this.mapPlexUser(row));
+  }
+
+  invalidatePlexSessions(): void {
+    this.db.exec('DELETE FROM sessions WHERE user_id IN (SELECT id FROM plex_users)');
   }
 
   // Session operations
@@ -361,11 +376,11 @@ export class DatabaseService {
   }
 
   private generateId(): string {
-    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    return randomUUID();
   }
 
   private generateToken(): string {
-    return `${Math.random().toString(36).substr(2)}${Math.random().toString(36).substr(2)}${Date.now().toString(36)}`;
+    return randomBytes(32).toString('hex');
   }
 
   close(): void {

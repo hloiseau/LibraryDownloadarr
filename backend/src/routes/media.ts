@@ -1,3 +1,5 @@
+import { assertDownloadPolicy } from '../services/downloadPolicy';
+import { DownloadError } from '../services/downloadService';
 import { Router } from 'express';
 import { DatabaseService } from '../models/database';
 import { plexService } from '../services/plexService';
@@ -383,6 +385,11 @@ export const createMediaRouter = (db: DatabaseService) => {
 
       const metadata = await plexService.getMediaMetadata(ratingKey, token);
 
+      assertDownloadPolicy(db, req.user!, 'original', metadata);
+      if (!metadata.Media?.some(media => media.Part?.some(part => part.key === partKey))) {
+        throw new DownloadError(400, 'Selected file does not belong to this media item.');
+      }
+
       // Log metadata for debugging permission issues
       logger.info('Download request metadata', {
         userId: req.user?.id,
@@ -397,14 +404,13 @@ export const createMediaRouter = (db: DatabaseService) => {
 
       // Check if user has download permission
       // Logic: Block ONLY if allowSync is explicitly disabled (false/0)
-      // - Admin users: always allowed (they manage the server)
       // - Owned server users: allowSync undefined = allowed (no restriction)
       // - Shared server users: allowSync false/0 = explicitly disabled
       const isExplicitlyDisabled = metadata.allowSync === false ||
                                    metadata.allowSync === 0 ||
                                    metadata.allowSync === '0';
 
-      if (isExplicitlyDisabled && !req.user?.isAdmin) {
+      if (isExplicitlyDisabled) {
         logger.warn('Download denied: user lacks download permission', {
           userId: req.user?.id,
           username: req.user?.username,
@@ -493,6 +499,7 @@ export const createMediaRouter = (db: DatabaseService) => {
       logger.info(`Download started for ${formattedTitle} by user ${req.user?.username}`);
       return;
     } catch (error) {
+      if (error instanceof DownloadError) return res.status(error.status).json({ error: error.message });
       logger.error('Download failed', { error });
       if (!res.headersSent) {
         return res.status(500).json({ error: 'Download failed' });
@@ -621,10 +628,8 @@ export const createMediaRouter = (db: DatabaseService) => {
       }
 
       // Check download permissions for each episode
-      // Admin users bypass permission checks
-      const isAdmin = req.user?.isAdmin;
-      if (!isAdmin) {
-        for (const episode of episodes) {
+      // Honor explicit Plex download restrictions for all accounts
+      for (const episode of episodes) {
           const isExplicitlyDisabled = episode.allowSync === false ||
                                        episode.allowSync === 0 ||
                                        episode.allowSync === '0';
@@ -639,8 +644,11 @@ export const createMediaRouter = (db: DatabaseService) => {
               error: 'Download not allowed. Some episodes in this season are not available for download.'
             });
           }
-        }
       }
+      if ([false, 0, '0'].includes(seasonMetadata.allowSync!)) throw new DownloadError(403, 'Downloads are disabled for your Plex account.');
+
+      assertDownloadPolicy(db, req.user!, 'original', seasonMetadata);
+      for (const episode of episodes) assertDownloadPolicy(db, req.user!, 'original', episode, seasonMetadata);
 
       // Prepare files for zipping
       const files: ZipFileEntry[] = [];
@@ -697,7 +705,8 @@ export const createMediaRouter = (db: DatabaseService) => {
 
       return;
     } catch (error) {
-      logger.error('Season download failed', { error });
+      if (error instanceof DownloadError) return res.status(error.status).json({ error: error.message });
+      logger.error('Season download failed');
       if (!res.headersSent) {
         return res.status(500).json({ error: 'Season download failed' });
       }
@@ -733,10 +742,8 @@ export const createMediaRouter = (db: DatabaseService) => {
       }
 
       // Check download permissions for each track
-      // Admin users bypass permission checks
-      const isAdmin = req.user?.isAdmin;
-      if (!isAdmin) {
-        for (const track of tracks) {
+      // Honor explicit Plex download restrictions for all accounts
+      for (const track of tracks) {
           const isExplicitlyDisabled = track.allowSync === false ||
                                        track.allowSync === 0 ||
                                        track.allowSync === '0';
@@ -751,8 +758,11 @@ export const createMediaRouter = (db: DatabaseService) => {
               error: 'Download not allowed. Some tracks in this album are not available for download.'
             });
           }
-        }
       }
+      if ([false, 0, '0'].includes(albumMetadata.allowSync!)) throw new DownloadError(403, 'Downloads are disabled for your Plex account.');
+
+      assertDownloadPolicy(db, req.user!, 'original', albumMetadata);
+      for (const track of tracks) assertDownloadPolicy(db, req.user!, 'original', track, albumMetadata);
 
       // Prepare files for zipping
       const files: ZipFileEntry[] = [];
@@ -807,7 +817,8 @@ export const createMediaRouter = (db: DatabaseService) => {
 
       return;
     } catch (error) {
-      logger.error('Album download failed', { error });
+      if (error instanceof DownloadError) return res.status(error.status).json({ error: error.message });
+      logger.error('Album download failed');
       if (!res.headersSent) {
         return res.status(500).json({ error: 'Album download failed' });
       }
