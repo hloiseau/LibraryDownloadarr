@@ -13,21 +13,27 @@ HEADERS = {'Accept': 'application/json', 'X-Plex-Client-Identifier': 'librarydow
 def request(path, method='GET', params=None, headers=None):
     url = BASE + path + ('?' + urllib.parse.urlencode(params) if params else '')
     req = urllib.request.Request(url, method=method, headers={**HEADERS, **(headers or {})})
-    with urllib.request.urlopen(req, timeout=30) as res:
-        data = res.read()
-        return json.loads(data) if data else {}
+    try:
+        with urllib.request.urlopen(req, timeout=30) as res:
+            data = res.read()
+            return json.loads(data) if data else {}
+    except urllib.error.HTTPError as exc:
+        print('HTTP FAILURE', method, path, exc.code, exc.read(4000).decode(errors='replace'), flush=True)
+        raise
 
 for attempt in range(60):
     try:
-        print('PMS identity', request('/identity'), flush=True)
-        break
+        identity = request('/identity')
+        if identity['MediaContainer'].get('startState') == 'running':
+            print('PMS identity', identity, flush=True)
+            break
     except Exception:
         if attempt == 59:
             raise
-        time.sleep(1)
+    time.sleep(1)
 
 request('/library/sections', 'POST', {'name': 'Generated test only', 'type': 'movie',
-        'agent': 'com.plexapp.agents.none', 'scanner': 'Plex Video Files Scanner',
+        'agent': 'tv.plex.agents.none', 'scanner': 'Plex Video Files',
         'language': 'en-US', 'location': '/tmp/plex-test-media'})
 section = request('/library/sections')['MediaContainer']['Directory'][0]['key']
 request(f'/library/sections/{section}/refresh')
