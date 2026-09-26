@@ -12,6 +12,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Compile the real download service
+        run: |
+          npm ci --ignore-scripts --prefix backend
+          npm run build --prefix backend
       - name: Install official PMS and create generated sample
         run: |
           sudo apt-get update -qq
@@ -21,8 +28,10 @@ jobs:
           sudo systemctl start plexmediaserver
           mkdir -p /tmp/plex-test-media
           ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=size=3840x2160:rate=24 -f lavfi -i sine=frequency=440:sample_rate=48000 -t 4 -c:v libx264 -threads 2 -preset ultrafast -crf 23 -c:a aac -b:a 128k /tmp/plex-test-media/Quality-Test.mkv
-      - name: Probe real decision and queue responses
-        run: python3 scripts/plex-download-probe.py
+      - name: Verify real output at each requested quality
+        run: |
+          PROBE_SETUP_ONLY=1 python3 scripts/plex-download-probe.py
+          python3 scripts/plex-conversion-live.py
       - name: Read relevant server diagnostics and stop server
         if: always()
         run: |

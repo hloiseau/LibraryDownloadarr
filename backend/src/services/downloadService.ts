@@ -115,7 +115,9 @@ function plexClient(credentials: DownloadCredentials, clientId: string): AxiosIn
       Accept: 'application/json', 'X-Plex-Token': credentials.token,
       'X-Plex-Client-Identifier': `librarydownloadarr-${clientId}`,
       'X-Plex-Product': 'LibraryDownloadarr', 'X-Plex-Pms-Api-Version': '1.0',
-      'X-Plex-Client-Profile-Name': 'generic',
+      // PMS loads <name>.xml. Linux ships Generic.xml; lowercase "generic"
+      // has no matching profile and fails with decision code 2004.
+      'X-Plex-Client-Profile-Name': 'Generic',
     },
   });
 }
@@ -139,9 +141,12 @@ export function verifyDecision(container: any, quality: DownloadQuality): void {
   const width = Number(video?.width ?? part?.width ?? media?.width);
   const height = Number(video?.height ?? part?.height ?? media?.height);
   const bitrate = Number(video?.bitrate);
+  // Static MP4 decisions on PMS 1.43 omit protocol. If present it must still
+  // be HTTP; the verified MP4 container and transfer content type stay required.
+  const protocol = part?.protocol ?? media?.protocol;
   if (part?.decision !== 'transcode' || video?.decision !== 'transcode' ||
       (part?.container ?? media?.container) !== 'mp4' ||
-      (part?.protocol ?? media?.protocol) !== 'http' || video?.codec !== 'h264' ||
+      (protocol !== undefined && protocol !== 'http') || video?.codec !== 'h264' ||
       !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0 ||
       width > profile.width || height > profile.height ||
       !Number.isFinite(bitrate) || bitrate <= 0 || bitrate > profile.bitrate * 1.25) {
@@ -233,7 +238,7 @@ export class DownloadService {
           `add-transcode-target(type=videoProfile&context=${context}&protocol=http&container=mp4&videoCodec=h264&audioCodec=aac&replace=true)`
         ).join('+'),
         mediaIndex, partIndex, protocol: 'http', directPlay: 0, directStream: 0, directStreamAudio: 0,
-        videoBitrate: profile.bitrate, videoResolution: `${profile.width}x${profile.height}`,
+        videoBitrate: profile.bitrate, videoResolution: `${profile.width}x${profile.height}`, videoQuality: 100,
         audioChannelCount: 2, subtitles: 'burn', advancedSubtitles: 'burn', autoAdjustQuality: 0,
       } });
       const addedItems = added.data.MediaContainer?.AddedQueueItems;

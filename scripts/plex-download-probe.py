@@ -24,7 +24,7 @@ def request(path, method='GET', params=None, headers=None):
 for attempt in range(60):
     try:
         identity = request('/identity')
-        if identity['MediaContainer'].get('startState') == 'running':
+        if identity['MediaContainer'].get('startState') not in ['starting', 'startingPlugins']:
             print('PMS identity', identity, flush=True)
             break
     except Exception:
@@ -45,6 +45,8 @@ for attempt in range(60):
 assert items, 'Generated sample not scanned'
 key = items[0]['key']
 print('Generated source', json.dumps(items[0].get('Media')), flush=True)
+if os.environ.get('PROBE_SETUP_ONLY'):
+    raise SystemExit(0)
 extra = '+'.join(f'add-transcode-target(type=videoProfile&context={context}&protocol=http&container=mp4&videoCodec=h264&audioCodec=aac&replace=true)' for context in ['static', 'streaming'])
 params = {'mediaIndex': 0, 'partIndex': 0, 'protocol': 'http', 'directPlay': 0, 'directStream': 0,
           'directStreamAudio': 0, 'videoBitrate': 2000, 'videoResolution': '1280x720',
