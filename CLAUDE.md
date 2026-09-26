@@ -776,6 +776,13 @@ include the UTC observation time plus queue/item ids for Plex log correlation.
 Do not treat intentional `directPlay=0` as the cause or serve media in this state.
 Plex logs from the authenticated server are required to diagnose this case.
 
+Preparation snapshots expose `stage` and nullable `progress` from each owned
+queue item's `TranscodeSession.progress` (also accepting `transcode`). Never
+query global Plex sessions for this. Season progress is duration-weighted when
+all durations are known, otherwise equally weighted; missing active progress
+stays null. Only verified ready/sending jobs report 100%. The UI animates unknown
+progress, shows elapsed time, and hands transfer progress to the native browser.
+
 ## Plex connection and app download permissions
 
 The quality preview now uses `PlexAuthFlows` with a persistent installation client

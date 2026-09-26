@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useRef, useEffect, ReactNode } from 'react';
 import { api } from '../services/api';
-import { DownloadQuality } from '../types';
+import { DownloadQuality, PreparationStage } from '../types';
 
 interface Download {
   id: string;
@@ -9,6 +9,9 @@ interface Download {
   filename: string;
   title: string;
   progress: number;
+  startedAt: number;
+  preparationStage?: PreparationStage;
+  preparationProgress?: number | null;
   status: 'preparing' | 'ready' | 'sending' | 'handedOff' | 'downloading' | 'completed' | 'error';
   jobId?: string;
   readyCount?: number;
@@ -90,6 +93,7 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
       filename,
       title,
       progress: 0,
+      startedAt: Date.now(),
       status: quality === 'original' ? 'downloading' : 'preparing',
       isBulkDownload,
     };
@@ -108,6 +112,7 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
             ...d, jobId: job.id, filename: job.filename,
             status: job.state === 'sending' ? 'handedOff' : job.state,
             readyCount: job.readyCount, fileCount: job.fileCount, error: job.error,
+            preparationStage: job.stage || 'deciding', preparationProgress: job.progress ?? null,
           } : d));
           if (job.state === 'error') {
             await api.cancelPreparedDownload(job.id).catch(() => undefined);

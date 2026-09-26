@@ -1,5 +1,6 @@
 import React from 'react';
 import { useDownloads } from '../contexts/DownloadContext';
+import { PreparationProgress } from './PreparationProgress';
 
 export const DownloadManager: React.FC = () => {
   const { downloads, removeDownload, savePreparedDownload } = useDownloads();
@@ -9,7 +10,7 @@ export const DownloadManager: React.FC = () => {
   }
 
   return (
-    <div className="fixed top-20 right-6 z-50 space-y-2 max-w-sm">
+    <div className="fixed top-20 right-4 sm:right-6 z-50 space-y-2 w-[calc(100%-2rem)] max-w-sm">
       {downloads.map((download) => (
         <div
           key={download.id}
@@ -30,13 +31,13 @@ export const DownloadManager: React.FC = () => {
           </div>
 
           {download.status === 'preparing' && (
-            <div className="text-xs text-primary-400" role="status">
-              Preparing with Plex… {download.fileCount ? `${download.readyCount || 0} / ${download.fileCount} files ready` : ''}
-            </div>
+            <PreparationProgress stage={download.preparationStage} progress={download.preparationProgress}
+              readyCount={download.readyCount} fileCount={download.fileCount} startedAt={download.startedAt} />
           )}
           {download.status === 'ready' && (
             <div className="space-y-2">
-              <p className="text-xs text-green-400">Converted file ready</p>
+              <PreparationProgress stage="ready" progress={100} readyCount={download.readyCount}
+                fileCount={download.fileCount} startedAt={download.startedAt} />
               {download.error && <p className="text-xs text-red-400">{download.error}</p>}
               <button className="btn-primary text-sm" onClick={() => savePreparedDownload(download.id)}>Save file</button>
             </div>

@@ -65,6 +65,13 @@ whole file in a browser Blob. Browser download tickets are single-use, expire
 after 60 seconds, and are sent in a POST body. Plex and session tokens do not
 appear in converted-download URLs; tickets are bound to the app session.
 
+Preparation displays a measured progress bar, elapsed time, and waiting,
+conversion/finalization stages. It reads `TranscodeSession.progress` from the
+requesting user's queue, with no global session access or administrator fallback.
+Season progress is weighted by duration when all durations are known, otherwise
+equally by file. Missing progress uses an indeterminate animation. Only verified
+ready files report 100%; the browser tracks transfer progress after Save file.
+
 The bitrate is a target and resolution is a maximum. Plex may choose a lower
 resolution at a constrained bitrate. Audio/subtitle selection follows Plex's
 per-user selection; selected subtitles are burned in. This version does not offer
@@ -114,11 +121,11 @@ The operator reported successful authenticated transcoded downloads on
 Arc A310 assigned to Plex. This is an operator report, not an independent claim
 that every profile, hardware path or permission scenario was tested on that NAS.
 
-Automated validation uses 30 backend tests with a simulated Plex HTTP server and
-real Express routes, plus seven frontend handler tests. It covers conversion
+Automated validation uses 34 backend tests with a simulated Plex HTTP server and
+real Express routes, plus 11 frontend rendering/handler tests. It covers conversion
 parameters, output guards, ownership, access revocation, queue cleanup, streaming,
 season ZIPs, one-use tickets, identity migration, policy enforcement, address
-selection, redaction and popup isolation. These tests are run during Docker builds.
+selection, redaction, popup isolation and progress reporting. These tests are run during Docker builds.
 A captured decision fixture came from an official PMS Linux instance with a
 generated UHD clip. Unclaimed-server probes do not validate authenticated Download
 Queue or GPU encoding.

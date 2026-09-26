@@ -44,6 +44,7 @@ async function fixture(t, options = {}) {
       const id = url.pathname.split('/')[3];
       if (id === '999') return send({}, 403);
       const items = url.pathname.endsWith('/children') ? [media('2'), media('3')] : [media(id)];
+      items.forEach(item => { if (state.durations?.[item.ratingKey] !== undefined) item.duration = state.durations[item.ratingKey]; });
       if (state.allowSyncFalse) items.forEach(item => { item.allowSync = false; });
       return send({ MediaContainer: { Metadata: items, totalSize: items.length } });
     }
@@ -72,9 +73,11 @@ async function fixture(t, options = {}) {
     }
     if (operation === 'items') return send({ MediaContainer: { DownloadQueueItem: (state.missing ? [] : queue.items).map(item => ({ ...item,
       status: queue.invalidProfile ? 'error' : state.status,
+      TranscodeSession: state.session,
       DecisionResult: queue.invalidProfile
         ? { generalDecisionCode: 2004, generalDecisionText: 'Could not construct decision request' }
         : state.decisionError,
+      ...state.itemUpdates?.[item.id],
     })) } });
     if (action === 'decision') {
       const result = decision(queue.quality);
@@ -95,6 +98,83 @@ async function fixture(t, options = {}) {
   return { requests, queues, state, service, credentials };
 }
 const request = { ratingKey: '1', partKey: '/library/parts/1/file.mkv', quality: '720p-2' };
+
+test('shared users receive real queue conversion progress through waiting, finalizing and verified readiness', async t => {
+  const f = await fixture(t, { status: 'waiting' });
+  const job = await f.service.create('alice', f.credentials, request);
+  assert.equal(job.stage, 'deciding');
+  assert.equal(job.progress, 0);
+  let status = await f.service.status(job.id, 'alice', f.credentials);
+  assert.equal(status.stage, 'waiting');
+  assert.equal(status.progress, 0);
+  f.state.status = 'processing';
+  f.state.session = { progress: '42.7', key: '/transcode/sessions/private', token: 'secret' };
+  status = await f.service.status(job.id, 'alice', f.credentials);
+  assert.equal(status.stage, 'processing');
+  assert.equal(status.progress, 42);
+  assert.doesNotMatch(JSON.stringify(status), /private|secret|TranscodeSession/);
+  f.state.session.progress = 0.5;
+  assert.equal((await f.service.status(job.id, 'alice', f.credentials)).progress, 0);
+  f.state.session.progress = 100;
+  status = await f.service.status(job.id, 'alice', f.credentials);
+  assert.equal(status.progress, 99);
+  assert.equal(status.stage, 'finalizing');
+  assert.equal(status.state, 'preparing');
+  await assert.rejects(f.service.beginTransfer(job.id, 'alice', f.credentials), { status: 409 });
+  f.state.status = 'available';
+  status = await f.service.status(job.id, 'alice', f.credentials);
+  assert.equal(status.progress, 100);
+  assert.equal(status.stage, 'ready');
+  assert.equal(status.state, 'ready');
+  assert.ok(f.requests.every(r => r.token === 'shared-token'));
+  assert.ok(!f.requests.some(r => /transcode\/sessions|status\/sessions|activities/.test(r.path)));
+});
+
+test('missing and malformed progress stay indeterminate; legacy and array sessions are supported', async t => {
+  const f = await fixture(t);
+  const job = await f.service.create('alice', f.credentials, request);
+  for (const value of [undefined, null, '', ' ', false, -1, 101, 'invalid', Infinity]) {
+    f.state.session = { progress: value };
+    const status = await f.service.status(job.id, 'alice', f.credentials);
+    assert.equal(status.progress, null);
+    assert.equal(status.state, 'preparing');
+  }
+  f.state.session = [{ progress: 23 }];
+  assert.equal((await f.service.status(job.id, 'alice', f.credentials)).progress, 23);
+  f.state.session = undefined;
+  f.state.itemUpdates = { 1: { transcode: { progress: 35 } } };
+  assert.equal((await f.service.status(job.id, 'alice', f.credentials)).progress, 35);
+  f.state.missing = true;
+  const status = await f.service.status(job.id, 'alice', f.credentials);
+  assert.equal(status.progress, null);
+  assert.equal(status.stage, 'deciding');
+});
+
+test('season progress includes completed episodes and weights the remaining work by duration', async t => {
+  const f = await fixture(t, { durations: { 2: 60000, 3: 180000 }, itemUpdates: {
+    1: { status: 'available' }, 2: { status: 'processing', TranscodeSession: { progress: 50 } },
+  } });
+  const job = await f.service.create('alice', f.credentials, { ratingKey: '100', season: true, quality: '720p-2' });
+  const status = await f.service.status(job.id, 'alice', f.credentials);
+  assert.equal(status.readyCount, 1);
+  assert.equal(status.fileCount, 2);
+  assert.equal(status.progress, 62); // (60 * 100 + 180 * 50) / 240
+  f.state.itemUpdates[2].TranscodeSession = undefined;
+  assert.equal((await f.service.status(job.id, 'alice', f.credentials)).progress, null);
+});
+
+test('season progress falls back to equal weights when durations are missing and errors never become ready', async t => {
+  const f = await fixture(t, { durations: { 2: 0 }, itemUpdates: {
+    1: { status: 'available' }, 2: { status: 'processing', TranscodeSession: { progress: 50 } },
+  } });
+  const job = await f.service.create('alice', f.credentials, { ratingKey: '100', season: true, quality: '720p-2' });
+  assert.equal((await f.service.status(job.id, 'alice', f.credentials)).progress, 75);
+  f.state.itemUpdates[2] = { status: 'error', TranscodeSession: { progress: 100 } };
+  const status = await f.service.status(job.id, 'alice', f.credentials);
+  assert.equal(status.state, 'error');
+  assert.notEqual(status.stage, 'ready');
+  assert.notEqual(status.progress, 100);
+});
 
 test('shared users never inherit the administrator token', () => {
   const setting = key => ({ plex_url: 'http://plex:32400', plex_token: 'admin-token' })[key];

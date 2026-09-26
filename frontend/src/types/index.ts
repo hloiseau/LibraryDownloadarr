@@ -79,6 +79,7 @@ export interface Settings {
 }
 
 export type DownloadQuality = 'original' | '720p-2' | '720p-4' | '1080p-8';
+export type PreparationStage = 'deciding' | 'waiting' | 'processing' | 'finalizing' | 'ready';
 export interface PreparedDownload {
   id: string;
   filename: string;
@@ -86,6 +87,8 @@ export interface PreparedDownload {
   state: 'preparing' | 'ready' | 'sending' | 'error';
   readyCount: number;
   fileCount: number;
+  stage: PreparationStage;
+  progress: number | null;
   error?: string;
 }
 

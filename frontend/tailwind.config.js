@@ -5,6 +5,10 @@ export default {
   ],
   theme: {
     extend: {
+      keyframes: {
+        preparation: { '0%': { transform: 'translateX(-100%)' }, '100%': { transform: 'translateX(300%)' } },
+      },
+      animation: { preparation: 'preparation 1.6s ease-in-out infinite' },
       colors: {
         primary: {
           50: '#eef2ff',

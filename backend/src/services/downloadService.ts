@@ -16,7 +16,13 @@ export interface DownloadRequest { ratingKey: string; quality: DownloadQuality; 
 export class DownloadError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
-interface QueueFile { id: number; ratingKey: string; filename: string; verified: boolean; maxBytes?: number; missingCount?: number }
+type PreparationStage = 'deciding' | 'waiting' | 'processing' | 'finalizing' | 'ready';
+interface QueueFile {
+  id: number; ratingKey: string; filename: string; verified: boolean; maxBytes?: number; missingCount?: number;
+  durationMs?: number;
+  stage: 'deciding' | 'waiting' | 'processing' | 'available';
+  progress: number | null;
+}
 interface DownloadJob {
   id: string;
   owner: string;
@@ -42,7 +48,20 @@ export interface DownloadSnapshot {
   state: DownloadJob['state'];
   readyCount: number;
   fileCount: number;
+  stage: PreparationStage;
+  progress: number | null;
   error?: string;
+}
+
+function transcodeProgress(entry: any): number | null {
+  // These fields belong to the authenticated queue item. Never query all
+  // server sessions or borrow an administrator token for progress reporting.
+  const value = entry.TranscodeSession ?? entry.transcode;
+  const session = Array.isArray(value) ? value[0] : value;
+  const raw = session?.progress;
+  if (typeof raw !== 'number' && (typeof raw !== 'string' || raw.trim() === '')) return null;
+  const progress = Number(raw);
+  return Number.isFinite(progress) && progress >= 0 && progress <= 100 ? progress : null;
 }
 
 // Match the existing admin/user credential policy without ever borrowing the
@@ -167,8 +186,20 @@ export class DownloadService {
   }
 
   private snapshot(job: DownloadJob): DownloadSnapshot {
+    const complete = job.state === 'ready' || job.state === 'sending';
+    const processing = job.files.filter(file => file.stage === 'processing');
+    const stage: PreparationStage = complete ? 'ready' : processing.length
+      ? processing.every(file => file.progress === 100) ? 'finalizing' : 'processing'
+      : job.files.some(file => file.stage === 'waiting') ? 'waiting' : 'deciding';
+    // Weight season progress by duration when every duration is known. If an
+    // active item's progress is missing, leave the bar indeterminate.
+    const weighted = job.files.every(file => file.durationMs !== undefined);
+    const weight = (file: QueueFile) => weighted ? file.durationMs! : 1;
+    const progress = complete ? 100 : job.files.some(file => file.progress === null) ? null
+      : Math.min(99, Math.floor(job.files.reduce((sum, file) => sum + file.progress! * weight(file), 0) /
+          job.files.reduce((sum, file) => sum + weight(file), 0)));
     return { id: job.id, quality: job.quality, filename: job.filename, state: job.state,
-      readyCount: job.readyCount, fileCount: job.files.length, error: job.error };
+      readyCount: job.readyCount, fileCount: job.files.length, stage, progress, error: job.error };
   }
   private owned(id: string, owner: string): DownloadJob {
     const job = this.jobs.get(id);
@@ -258,6 +289,8 @@ export class DownloadService {
         const maxBytes = durationMs > 0
           ? durationMs / 1000 * (profile.bitrate * 1.5 + 512) * 1000 / 8 + 8 * 1024 * 1024 : undefined;
         return { id: positiveId(queued?.id), ratingKey: String(item.ratingKey), verified: false, maxBytes,
+          durationMs: Number.isFinite(durationMs) && durationMs > 0 ? durationMs : undefined,
+          stage: 'deciding', progress: 0,
           filename: `${safeFilename(name)} - ${input.quality}.mp4` };
       });
       if (new Set(files.map(file => file.id)).size !== files.length) throw new DownloadError(502, 'Plex returned duplicate queue items.');
@@ -294,6 +327,8 @@ export class DownloadService {
       for (const file of job.files) {
         const entry = entries.find((item: any) => Number(item.id) === file.id);
         if (!entry) {
+          file.stage = 'deciding';
+          file.progress = null;
           file.missingCount = (file.missingCount || 0) + 1;
           if (file.missingCount < 4) continue;
           throw new DownloadError(502, 'Plex no longer lists this file in its download queue. Prepare the download again.');
@@ -340,8 +375,13 @@ export class DownloadService {
             file.verified = true;
           }
           ready++;
+          file.stage = 'available';
+          file.progress = 100;
         } else if (!['deciding', 'waiting', 'processing'].includes(entry.status)) {
           throw new DownloadError(502, 'Plex returned an unsupported download state.');
+        } else {
+          file.stage = entry.status;
+          file.progress = entry.status === 'processing' ? transcodeProgress(entry) : 0;
         }
       }
       job.readyCount = ready;
