@@ -770,6 +770,11 @@ not `generic`. Static MP4 decisions on PMS 1.43 may omit `protocol`; reject a
 conflicting explicit protocol while retaining container, codec, size and bitrate
 checks. `backend/test/fixtures/pms-1.43-static-decision.json` contains an actual
 decision captured from a generated UHD clip, without source library metadata.
+Queue `status: error` still means failure when a decision says `Conversion OK`
+(general 1001 with no transcode refusal). Report a file-creation failure and
+include the UTC observation time plus queue/item ids for Plex log correlation.
+Do not treat intentional `directPlay=0` as the cause or serve media in this state.
+Plex logs from the authenticated server are required to diagnose this case.
 
 ## Plex connection and app download permissions
 

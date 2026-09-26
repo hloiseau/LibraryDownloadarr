@@ -59,6 +59,22 @@ are retried briefly. Expired files have their own message. If Plex reports an er
 without a reason, inspect the Plex Media Server logs for that attempt. A successful
 conversion decision followed by queue failure can still require Plex logs.
 
+The latest NAS attempt passed the decision stage (`general 1001`, `transcode
+1001`, `Conversion OK`) but the queue still returned `status: error`.
+`directPlay 3000` is expected because this app requests conversion with
+`directPlay=0`; it does not explain why file creation failed. The branch now
+clarifies this case and includes the UTC observation time and queue/item ids for
+log correlation. Actual transcode refusals still retain their decision details.
+This diagnostic-only change passes 30 backend and seven frontend tests and both
+production builds. It has not been published in a new image; the published image
+remains application commit `85505d0`, so no reinstall is needed to gather logs.
+
+From Plex Web using the server owner's account, select the server in Settings,
+then **Manage → Troubleshooting → Download Logs** and save the ZIP. The logs from
+the failed attempt are needed to identify the actual cause. Do not publish a
+user's logs in this repository.
+https://support.plex.tv/articles/200250417-plex-media-server-log-files/
+
 The reported `general 2004: Could not construct decision request` exposed a
 case-sensitive profile-name bug: the app requested `generic`, but Linux PMS ships
 `Generic.xml`. With official PMS 1.43.4.10903-e5521bd8c and a generated UHD clip,
@@ -84,6 +100,12 @@ when PMS tried to open an empty output path. No complete converted file was
 obtained; this separate playback endpoint does not validate Download Queue.
 The unsuccessful encoding run is recorded at:
 https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36255528410
+
+A follow-up comparison of direct MP4 and MKV output also failed for both formats
+with the empty output path. No complete file was produced, and this does not
+establish a container-format problem in authenticated Download Queue. The app's
+MP4 request remains unchanged; diagnosing the NAS failure requires its Plex logs.
+https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36256485663
 
 ## Behavior
 

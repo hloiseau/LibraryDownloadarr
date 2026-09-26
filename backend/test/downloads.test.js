@@ -295,6 +295,34 @@ test('Plex queue error exposes decision and PMS version without tokens', async t
   assert.doesNotMatch(result.error, /shared-token|other-secret|http:\/\/plex/);
 });
 
+test('Conversion OK followed by queue error reports file creation failure, not direct-play refusal', async t => {
+  const f = await fixture(t, { status: 'error', decisionError: {
+    generalDecisionCode: 1001, generalDecisionText: 'Direct play not available; Conversion OK.',
+    transcodeDecisionCode: 1001, transcodeDecisionText: 'Direct play not available; Conversion OK.',
+    directPlayDecisionCode: 3000, directPlayDecisionText: 'App cannot direct play this item. Direct play is disabled.',
+  } });
+  const job = await f.service.create('alice', f.credentials, request);
+  const result = await f.service.status(job.id, 'alice', f.credentials);
+  assert.equal(result.state, 'error');
+  assert.match(result.error, /approved conversion but failed to create the file/);
+  assert.match(result.error, /PMS 1.43.0-test/);
+  assert.match(result.error, /queue 1, item 1/);
+  assert.doesNotMatch(result.error, /Direct play is disabled|shared-token|Conversion OK/);
+  await assert.rejects(f.service.beginTransfer(job.id, 'alice', f.credentials), { status: 409 });
+  assert.ok(!f.requests.some(r => r.path.endsWith('/media')));
+  assert.ok([...f.queues.values()].every(queue => !queue.items.length));
+});
+
+test('a transcode refusal is retained even if the general decision says conversion is possible', async t => {
+  const f = await fixture(t, { status: 'error', decisionError: {
+    generalDecisionCode: 1001, transcodeDecisionCode: 4005, transcodeDecisionText: 'Encoder unavailable',
+  } });
+  const job = await f.service.create('alice', f.credentials, request);
+  const result = await f.service.status(job.id, 'alice', f.credentials);
+  assert.match(result.error, /transcode 4005: Encoder unavailable/);
+  assert.doesNotMatch(result.error, /decision response does not explain/);
+});
+
 test('temporarily missing queue item is retried, while expiry is reported distinctly', async t => {
   const f = await fixture(t, { missing: true });
   const job = await f.service.create('alice', f.credentials, request);

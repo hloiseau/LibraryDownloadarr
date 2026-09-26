@@ -59,8 +59,11 @@ export function downloadCredentials(
 
 // Plex can include paths or credentials in diagnostic text. Only expose known
 // decision fields; never serialize an Axios request, headers, or raw response.
+const plexDecision = (value: any) => Array.isArray(value?.DecisionResult)
+  ? value.DecisionResult[0] : value?.DecisionResult || value;
+
 export function plexDecisionSummary(value: any, secrets: string[] = []): string {
-  const decision = Array.isArray(value?.DecisionResult) ? value.DecisionResult[0] : value?.DecisionResult || value;
+  const decision = plexDecision(value);
   if (!decision || typeof decision !== 'object') return '';
   const clean = (text: string) => {
     for (const secret of secrets.filter(Boolean)) text = text.split(secret).join('[redacted]').split(encodeURIComponent(secret)).join('[redacted]');
@@ -299,13 +302,18 @@ export class DownloadService {
         if (entry.status === 'expired') throw new DownloadError(410, 'Plex expired the prepared file. Prepare the download again.');
         if (entry.status === 'error') {
           const secrets = [String(job.client.defaults.headers['X-Plex-Token'] || '')];
+          let decisionPayload = entry;
           let detail = plexDecisionSummary(entry, secrets);
           if (!detail) {
             try {
               const decision = await job.client.get(`/downloadQueue/${job.queueId}/item/${file.id}/decision`);
+              decisionPayload = decision.data.MediaContainer;
               detail = plexDecisionSummary(decision.data.MediaContainer, secrets);
             } catch (error) {
-              if (axios.isAxiosError(error)) detail = plexDecisionSummary(error.response?.data?.MediaContainer, secrets);
+              if (axios.isAxiosError(error)) {
+                decisionPayload = error.response?.data?.MediaContainer;
+                detail = plexDecisionSummary(decisionPayload, secrets);
+              }
             }
           }
           let version = '';
@@ -314,6 +322,15 @@ export class DownloadService {
             const value = identity.data.MediaContainer?.version;
             if (typeof value === 'string' && /^[a-zA-Z0-9.\-]{1,60}$/.test(value)) version = `, PMS ${value}`;
           } catch { /* Diagnostic lookup must not hide the queue failure. */ }
+          const decision = plexDecision(decisionPayload);
+          if (Number(decision?.generalDecisionCode) === 1001 &&
+              (decision?.transcodeDecisionCode === undefined || [1000, 1001].includes(Number(decision.transcodeDecisionCode)))) {
+            // A successful decision is only a plan. The queue's error state
+            // still wins; directPlay=0 is intentional and is not the failure.
+            throw new DownloadError(502, `Plex approved conversion but failed to create the file (${job.quality}${version}). ` +
+              `The decision response does not explain this failure. Check Plex Media Server logs near ${new Date().toISOString()} ` +
+              `(queue ${job.queueId}, item ${file.id}).`);
+          }
           throw new DownloadError(502, `Plex download failed (status error${version}, ${job.quality}). ${detail || 'Plex supplied no decision reason. Check the Plex Media Server logs at the time of this download.'}`);
         }
         if (entry.status === 'available') {
