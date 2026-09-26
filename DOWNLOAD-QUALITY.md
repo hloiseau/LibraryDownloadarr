@@ -57,8 +57,10 @@ the error response; go back to the app to retry.
 
 Use `deploy/truenas-quality.yaml` as the Custom App YAML. Before deployment:
 
-1. Build/publish the preview image from this branch and pin its resulting digest.
-   The `quality-preview` tag in the template is not evidence of publication.
+1. The template pins the image built from commit `8b6e625` on 2026-09-26.
+   Its GitHub Actions build passed all 11 tests and anonymous registry access
+   was verified. The mutable convenience tag is `quality-preview`.
+   For future builds, update the pinned digest after verifying publication.
 2. Replace `NAS_LAN_IP` and `/mnt/POOL/...` using the NAS's actual configuration.
    Create dedicated app data/log datasets and keep any existing installation intact.
 3. Deploy as `librarydownloadarr-quality` on port 5070, then set up the app's
