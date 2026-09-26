@@ -28,12 +28,12 @@ jobs:
           sudo systemctl start plexmediaserver
           mkdir -p /tmp/plex-test-media
           ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=size=3840x2160:rate=24 -f lavfi -i sine=frequency=440:sample_rate=48000 -t 4 -c:v libx264 -threads 2 -preset ultrafast -crf 23 -c:a aac -b:a 128k /tmp/plex-test-media/Quality-Test.mkv
-      - name: Verify real output at each requested quality
+      - name: Compare MP4 and MKV complete output files
         run: |
           PROBE_SETUP_ONLY=1 python3 scripts/plex-download-probe.py
-          python3 scripts/plex-conversion-live.py
+          python3 scripts/plex-container-probe.py
       - name: Read relevant server diagnostics and stop server
         if: always()
         run: |
-          sudo grep -E 'ERROR|WARN|[Rr]esolution|[Bb]itrate|[Ll]imitation|TranscodeUniversalRequest|client profile|ClientProfileExtra|MDE:|DownloadQueue|download queue' '/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Logs/Plex Media Server.log' | tail -180 || true
+          sudo grep -E 'ERROR|WARN|Job running:|[Rr]esolution|[Bb]itrate|TranscodeUniversalRequest|DownloadQueue|download queue' '/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Logs/Plex Media Server.log' | tail -120 || true
           sudo systemctl stop plexmediaserver || true
