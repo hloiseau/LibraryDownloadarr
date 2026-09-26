@@ -1,0 +1,30 @@
+name: Diagnose Plex download preparation
+on:
+  push:
+    branches: ['codex/plex-download-probe-a6fa824141dc']
+permissions:
+  contents: read
+jobs:
+  plex-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install official PMS and create generated sample
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          curl --fail --location --output /tmp/plex.deb https://downloads.plex.tv/plex-media-server-new/1.43.4.10903-e5521bd8c/debian/plexmediaserver_1.43.4.10903-e5521bd8c_amd64.deb
+          sudo dpkg -i /tmp/plex.deb
+          sudo systemctl start plexmediaserver
+          mkdir -p /tmp/plex-test-media
+          ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=size=3840x2160:rate=24 -f lavfi -i sine=frequency=440:sample_rate=48000 -t 4 -c:v libx264 -threads 2 -preset ultrafast -crf 23 -c:a aac -b:a 128k /tmp/plex-test-media/Quality-Test.mkv
+      - name: Probe real decision and queue responses
+        run: python3 scripts/plex-download-probe.py
+      - name: Read relevant server diagnostics and stop server
+        if: always()
+        run: |
+          sudo grep -E 'TranscodeUniversalRequest|client profile|ClientProfileExtra|MDE:|DownloadQueue|download queue' '/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Logs/Plex Media Server.log' | tail -100 || true
+          sudo systemctl stop plexmediaserver || true
