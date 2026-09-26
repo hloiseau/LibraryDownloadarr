@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useRef, useEffect, ReactNode } from 'react';
 import { api } from '../services/api';
+import { DownloadQuality } from '../types';
 
 interface Download {
   id: string;
@@ -8,14 +9,18 @@ interface Download {
   filename: string;
   title: string;
   progress: number;
-  status: 'downloading' | 'completed' | 'error';
+  status: 'preparing' | 'ready' | 'sending' | 'handedOff' | 'downloading' | 'completed' | 'error';
+  jobId?: string;
+  readyCount?: number;
+  fileCount?: number;
   error?: string;
   isBulkDownload?: boolean; // True for season/album zips (no progress tracking)
 }
 
 interface DownloadContextType {
   downloads: Download[];
-  startDownload: (ratingKey: string, partKey: string, filename: string, title: string) => Promise<void>;
+  startDownload: (ratingKey: string, partKey: string, filename: string, title: string, quality?: DownloadQuality) => Promise<void>;
+  savePreparedDownload: (id: string) => Promise<void>;
   removeDownload: (id: string) => void;
 }
 
@@ -35,11 +40,21 @@ interface DownloadProviderProps {
 
 export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) => {
   const [downloads, setDownloads] = useState<Download[]>([]);
+  const preparations = useRef(new Map<string, { cancelled: boolean; jobId?: string; handedOff?: boolean }>());
+
+  useEffect(() => () => {
+    for (const item of preparations.current.values()) {
+      if (!item.handedOff) {
+        item.cancelled = true;
+        if (item.jobId) void api.cancelPreparedDownload(item.jobId).catch(() => undefined);
+      }
+    }
+  }, []);
 
   // Warn user before closing/refreshing if downloads are in progress
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      const activeDownloads = downloads.filter(d => d.status === 'downloading');
+      const activeDownloads = downloads.filter(d => ['downloading', 'preparing', 'ready'].includes(d.status));
 
       if (activeDownloads.length > 0) {
         // Standard way to show browser confirmation dialog
@@ -59,7 +74,8 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
     ratingKey: string,
     partKey: string,
     filename: string,
-    title: string
+    title: string,
+    quality: DownloadQuality = 'original'
   ): Promise<void> => {
     const downloadId = `${ratingKey}-${partKey}-${Date.now()}`;
 
@@ -74,11 +90,43 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
       filename,
       title,
       progress: 0,
-      status: 'downloading',
+      status: quality === 'original' ? 'downloading' : 'preparing',
       isBulkDownload,
     };
 
     setDownloads((prev) => [...prev, newDownload]);
+
+    if (quality !== 'original') {
+      const preparation: { cancelled: boolean; jobId?: string; handedOff?: boolean } = { cancelled: false };
+      preparations.current.set(downloadId, preparation);
+      try {
+        let job = await api.prepareDownload({ ratingKey, quality,
+          ...(partKey.includes('/season/') ? { season: true } : { partKey }) });
+        preparation.jobId = job.id;
+        while (!preparation.cancelled) {
+          setDownloads(prev => prev.map(d => d.id === downloadId ? {
+            ...d, jobId: job.id, filename: job.filename,
+            status: job.state === 'sending' ? 'handedOff' : job.state,
+            readyCount: job.readyCount, fileCount: job.fileCount, error: job.error,
+          } : d));
+          if (job.state === 'error') {
+            await api.cancelPreparedDownload(job.id).catch(() => undefined);
+            preparations.current.delete(downloadId);
+            return;
+          }
+          if (job.state === 'ready') return;
+          await new Promise(resolve => setTimeout(resolve, 2500));
+          if (!preparation.cancelled) job = await api.getPreparedDownload(job.id);
+        }
+        await api.cancelPreparedDownload(job.id).catch(() => undefined);
+      } catch (error: any) {
+        if (preparation.jobId) await api.cancelPreparedDownload(preparation.jobId).catch(() => undefined);
+        if (!preparation.cancelled) setDownloads(prev => prev.map(d => d.id === downloadId
+          ? { ...d, status: 'error', error: error.response?.data?.error || error.message || 'Preparation failed' } : d));
+        preparations.current.delete(downloadId);
+      }
+      return;
+    }
 
     try {
       // Check if partKey is already a full URL (for bulk downloads) or a path fragment
@@ -180,12 +228,42 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
     }
   };
 
+  const savePreparedDownload = async (id: string) => {
+    const download = downloads.find(d => d.id === id);
+    if (!download?.jobId || download.status !== 'ready') return;
+    setDownloads(prev => prev.map(d => d.id === id ? { ...d, status: 'sending' } : d));
+    try {
+      const ticket = await api.getDownloadTicket(download.jobId);
+      const preparation = preparations.current.get(id);
+      if (!preparation || preparation.cancelled) return;
+      // A native attachment response saves to disk; no multi-GB Blob in the SPA.
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = `/api/downloads/${download.jobId}/file`;
+      const input = document.createElement('input');
+      input.type = 'hidden'; input.name = 'ticket'; input.value = ticket;
+      form.appendChild(input); document.body.appendChild(form);
+      preparation.handedOff = true;
+      form.submit(); form.remove();
+      setDownloads(prev => prev.map(d => d.id === id ? { ...d, status: 'handedOff' } : d));
+    } catch (error: any) {
+      setDownloads(prev => prev.map(d => d.id === id ? { ...d, status: 'ready',
+        error: error.response?.data?.error || 'Could not start the download. Try again.' } : d));
+    }
+  };
+
   const removeDownload = (id: string) => {
+    const preparation = preparations.current.get(id);
+    if (preparation) {
+      preparation.cancelled = true;
+      if (preparation.jobId && !preparation.handedOff) void api.cancelPreparedDownload(preparation.jobId).catch(() => undefined);
+      preparations.current.delete(id);
+    }
     setDownloads((prev) => prev.filter((d) => d.id !== id));
   };
 
   return (
-    <DownloadContext.Provider value={{ downloads, startDownload, removeDownload }}>
+    <DownloadContext.Provider value={{ downloads, startDownload, savePreparedDownload, removeDownload }}>
       {children}
     </DownloadContext.Provider>
   );

@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import { DatabaseService } from '../models/database';
-import { plexService } from '../services/plexService';
+import { PlexAuthFlows, exactServer, serverToken } from '../services/plexAuthFlow';
+import { DownloadError } from '../services/downloadService';
 import { logger } from '../utils/logger';
 import { AuthRequest, createAuthMiddleware } from '../middleware/auth';
 
-export const createAuthRouter = (db: DatabaseService) => {
+export const createAuthRouter = (db: DatabaseService, flows: PlexAuthFlows) => {
   const router = Router();
   const authMiddleware = createAuthMiddleware(db);
 
@@ -30,6 +31,7 @@ export const createAuthRouter = (db: DatabaseService) => {
 
       // Hash password
       const passwordHash = await bcrypt.hash(password, 10);
+      if (db.hasAdminUser()) return res.status(400).json({ error: 'Setup already completed' });
 
       // Create admin user (email is optional, use username@localhost as default)
       const adminUser = db.createAdminUser({
@@ -99,122 +101,42 @@ export const createAuthRouter = (db: DatabaseService) => {
     }
   });
 
-  // Plex OAuth: Generate PIN
+  // The browser receives an unpredictable flow handle, never a Plex token.
   router.post('/plex/pin', async (_req, res) => {
-    try {
-      const pin = await plexService.generatePin();
-      return res.json({
-        id: pin.id,
-        code: pin.code,
-        url: `https://app.plex.tv/auth#?clientID=${encodeURIComponent(
-          'librarydownloadarr'
-        )}&code=${encodeURIComponent(pin.code)}&context[device][product]=${encodeURIComponent(
-          'LibraryDownloadarr'
-        )}`,
-      });
-    } catch (error) {
-      logger.error('Plex PIN generation error', { error });
-      return res.status(500).json({ error: 'Failed to generate Plex PIN' });
+    try { return res.json(await flows.start()); }
+    catch (error) {
+      return res.status(error instanceof DownloadError ? error.status : 502)
+        .json({ error: error instanceof DownloadError ? error.message : 'Plex sign-in is unavailable. Try again.' });
     }
   });
 
-  // Plex OAuth: Check PIN and authenticate
   router.post('/plex/authenticate', async (req, res) => {
     try {
-      const { pinId } = req.body;
-
-      if (!pinId) {
-        return res.status(400).json({ error: 'PIN ID is required' });
+      const result = await flows.authorize(req.body.flowId);
+      if (!result) return res.status(202).json({ pending: true });
+      const machineId = db.getSetting('plex_machine_id');
+      if (!machineId || !db.getSetting('plex_url')) {
+        throw new DownloadError(503, 'The administrator must connect the Plex server in Settings first.');
       }
-
-      logger.debug('Checking Plex PIN', { pinId });
-
-      const authResponse = await plexService.checkPin(pinId);
-      if (!authResponse) {
-        return res.status(400).json({ error: 'PIN not yet authorized' });
-      }
-
-      logger.debug('Plex PIN authorized', { username: authResponse.user.username });
-
-      // SECURITY: Validate user has access to admin's configured Plex server
-      const adminServerUrl = db.getSetting('plex_url') || '';
-      const adminMachineId = db.getSetting('plex_machine_id') || '';
-
-      if (!adminServerUrl) {
-        logger.error('Admin Plex server not configured');
-        return res.status(500).json({ error: 'Plex server not configured. Please contact administrator.' });
-      }
-
-      if (!adminMachineId) {
-        logger.error('Admin Plex machine ID not configured');
-        return res.status(500).json({ error: 'Plex server machine ID not configured. Please contact administrator.' });
-      }
-
-      // Get user's accessible servers and validate they have access to admin's server
-      let userToken: string;
-      try {
-        const userServers = await plexService.getUserServers(authResponse.authToken);
-        const connection = plexService.findBestServerConnection(userServers, adminMachineId);
-
-        if (!connection.serverUrl) {
-          logger.warn('User does not have access to admin Plex server', {
-            username: authResponse.user.username,
-            adminMachineId,
-            userServersCount: userServers.length
-          });
-          return res.status(403).json({
-            error: 'Access denied. You do not have access to this Plex server.'
-          });
-        }
-
-        // For shared servers, use the server's accessToken; for owned servers, use the user's auth token
-        userToken = connection.accessToken || authResponse.authToken;
-
-        logger.debug('User validated for admin server', {
-          username: authResponse.user.username,
-          hasAccessToken: !!connection.accessToken,
-          isSharedServer: !!connection.accessToken
-        });
-      } catch (error) {
-        logger.error('Failed to validate user server access', { error });
-        return res.status(500).json({ error: 'Failed to validate server access' });
-      }
-
-      // Create or update plex user (no serverUrl stored - always use admin's)
+      const server = exactServer(result.servers, machineId);
       const plexUser = db.createOrUpdatePlexUser({
-        username: authResponse.user.username,
-        email: authResponse.user.email,
-        plexToken: userToken,
-        plexId: authResponse.user.uuid,
+        username: result.auth.user.username, email: result.auth.user.email,
+        plexToken: serverToken(server, result.auth.authToken), plexId: result.auth.user.uuid,
       });
-
-      // Create session
+      flows.consume(req.body.flowId);
       const session = db.createSession(plexUser.id);
-
-      logger.info(`Plex user authenticated: ${plexUser.username}`);
-
-      return res.json({
-        user: {
-          id: plexUser.id,
-          username: plexUser.username,
-          email: plexUser.email,
-          isAdmin: plexUser.isAdmin,
-        },
-        token: session.token,
-      });
-    } catch (error: any) {
-      logger.error('Plex authentication error', {
-        error: error.message,
-        stack: error.stack,
-        pinId: req.body.pinId
-      });
-      return res.status(500).json({ error: 'Plex authentication failed' });
+      return res.json({ user: { id: plexUser.id, username: plexUser.username,
+        email: plexUser.email, isAdmin: plexUser.isAdmin }, token: session.token });
+    } catch (error) {
+      return res.status(error instanceof DownloadError ? error.status : 502)
+        .json({ error: error instanceof DownloadError ? error.message : 'Plex sign-in failed. Try again.' });
     }
   });
 
   // Get current user
   router.get('/me', authMiddleware, (req: AuthRequest, res) => {
-    return res.json({ user: req.user });
+    const { id, username, isAdmin } = req.user!;
+    return res.json({ user: { id, username, isAdmin } });
   });
 
   // Logout

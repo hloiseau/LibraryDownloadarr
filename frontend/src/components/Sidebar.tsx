@@ -75,6 +75,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
 
           {user?.isAdmin && (
             <>
+              <button onClick={() => handleNavigate('/admin/permissions')} className={`w-full text-left px-4 py-2 rounded-lg ${isActive('/admin/permissions') ? 'bg-dark-200 text-primary-400' : 'hover:bg-dark-200'}`}>Download permissions</button>
               <button
                 onClick={() => handleNavigate('/admin/download-history')}
                 className={`w-full text-left px-4 py-2 rounded-lg transition-colors ${

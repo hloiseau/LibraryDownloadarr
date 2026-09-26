@@ -754,3 +754,52 @@ CREATE TABLE download_history (
 **Last Updated**: 2025-11-07 (Session: claude/add-download-progress-bar-011CUsC4Kdw1m1yxqpX5x1oG)
 
 **Maintenance Note**: When making significant architectural changes, please update this document to help future agents understand the codebase.
+
+
+## Download Quality Preview
+
+`backend/src/services/downloadService.ts` uses Plex Download Queue API with a
+separate authenticated client per job. `routes/downloads.ts` exposes preparation,
+polling, cancellation and a session-bound, one-use POST download ticket. Never
+fall back to original media or an admin Plex token for a shared user. Converted
+files stream through the native browser downloader; original paths are unchanged.
+See `DOWNLOAD-QUALITY.md` for lifecycle limits and the operator-reported NAS pilot.
+Run `cd backend && npm test` and the frontend build before committing.
+PMS profile names resolve to case-sensitive filenames on Linux: send `Generic`,
+not `generic`. Static MP4 decisions on PMS 1.43 may omit `protocol`; reject a
+conflicting explicit protocol while retaining container, codec, size and bitrate
+checks. `backend/test/fixtures/pms-1.43-static-decision.json` contains an actual
+decision captured from a generated UHD clip, without source library metadata.
+Queue `status: error` still means failure when a decision says `Conversion OK`
+(general 1001 with no transcode refusal). Report a file-creation failure and
+include the UTC observation time plus queue/item ids for Plex log correlation.
+Do not treat intentional `directPlay=0` as the cause or serve media in this state.
+Plex logs from the authenticated server are required to diagnose this case.
+
+## Plex connection and app download permissions
+
+The quality preview now uses `PlexAuthFlows` with a persistent installation client
+id and five-minute flow handles. Owner setup is bound to the local admin session.
+Plex users are keyed by the authenticated `/api/v2/user` id (`plex:<id>`), never a
+PIN id; old Plex-user sessions are invalidated once. `/auth/me` must not expose
+Plex tokens. Shared users must have access to the exact configured server.
+
+`downloadPolicy.ts` stores defaults and per-user overrides in settings, bound to
+the configured server id. `/api/permissions` is admin-only; `/me` returns the
+caller's effective policy. Enforce rules on ALL original and converted routes,
+including ZIPs and again before handing out prepared media. These rules restrict
+downloads, not Plex library visibility. Do not cache `/api/` in the service worker.
+Plex failures expose only whitelisted, redacted decision text and codes.
+
+Plex popup isolation: never use `window.closed` to end authorization polling.
+COOP can detach the popup reference while the real tab stays open. Closing the
+popup is best-effort and must not discard successful backend authorization.
+Run `cd frontend && npm test` for the page-handler regression tests; Docker runs
+them before the frontend build.
+
+Plex address selection: the owner explicitly selects an advertised Local/Remote/
+Relay URL or enters a custom URL. Test and save only that URL; never silently
+fall back to another connection. `plexConnection.ts` handles identity/library
+checks and safe error classification. Retain failed flows for address retries.
+Custom URLs must identify the expected server before a token is sent; only exact
+advertised connections may retry a denied identity request with authentication.

@@ -17,6 +17,7 @@ export interface Library {
 }
 
 export interface MediaItem {
+  librarySectionID?: string;
   ratingKey: string;
   key: string;
   title: string;
@@ -64,6 +65,7 @@ export interface Part {
 }
 
 export interface PlexPin {
+  flowId: string;
   id: number;
   code: string;
   url: string;
@@ -74,4 +76,33 @@ export interface Settings {
   hasPlexToken: boolean;
   plexMachineId?: string;
   plexServerName?: string;
+}
+
+export type DownloadQuality = 'original' | '720p-2' | '720p-4' | '1080p-8';
+export interface PreparedDownload {
+  id: string;
+  filename: string;
+  quality: Exclude<DownloadQuality, 'original'>;
+  state: 'preparing' | 'ready' | 'sending' | 'error';
+  readyCount: number;
+  fileCount: number;
+  error?: string;
+}
+
+export interface PlexServerChoice {
+  id: string;
+  name: string;
+  connections: { url: string; local: boolean; relay?: boolean }[];
+}
+export interface DownloadPolicy {
+  enabled: boolean;
+  libraries: string[] | null;
+  qualities: DownloadQuality[];
+  serverId: string;
+}
+export interface PermissionUser {
+  id: string;
+  username: string;
+  custom: boolean;
+  policy: DownloadPolicy;
 }

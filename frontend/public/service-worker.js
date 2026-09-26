@@ -1,4 +1,4 @@
-const CACHE_NAME = 'librarydownloadarr-v2';
+const CACHE_NAME = 'librarydownloadarr-v3';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -32,6 +32,11 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   // Skip caching for download endpoints (they're too large and shouldn't be cached)
   const url = new URL(event.request.url);
+  // Account-specific metadata and permission responses must never be cached.
+  if (url.pathname.startsWith('/api/') || event.request.method !== 'GET') {
+    event.respondWith(fetch(event.request));
+    return;
+  }
   const isDownloadRequest = url.pathname.includes('/download') ||
                            url.pathname.includes('/season/') ||
                            url.pathname.includes('/album/');

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { api } from '../services/api';
@@ -11,6 +11,8 @@ export const Login: React.FC = () => {
   const [isPlexLoading, setIsPlexLoading] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const navigate = useNavigate();
+  const active = useRef(true);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const { login, setUser, setToken, token, user } = useAuthStore();
 
   // Redirect to home if already logged in
@@ -57,52 +59,29 @@ export const Login: React.FC = () => {
         return;
       }
 
-      // Poll for authentication
-      const maxAttempts = 60; // 2 minutes (60 * 2 seconds)
-      let attempts = 0;
-
-      const pollInterval = setInterval(async () => {
-        attempts++;
-
-        try {
-          const response = await api.authenticatePlexPin(pin.id);
-          clearInterval(pollInterval);
+      const deadline = Date.now() + 5 * 60 * 1000;
+      while (active.current && Date.now() < deadline) {
+        const response = await api.authenticatePlexPin(pin.flowId);
+        if (!active.current) return;
+        if (response) {
+          try { authWindow.close(); } catch { /* Closing an isolated Plex tab is best-effort. */ }
           setUser(response.user);
           setToken(response.token);
           setIsPlexLoading(false);
           navigate('/');
-        } catch (err: any) {
-          // Check if this is a 403 (access denied) error
-          if (err.response?.status === 403) {
-            clearInterval(pollInterval);
-            setError(err.response?.data?.error || 'Access denied. You do not have access to this Plex server.');
-            setIsPlexLoading(false);
-            return;
-          }
-
-          // Check if this is a 500 (server error) - likely machine ID not configured
-          if (err.response?.status === 500) {
-            clearInterval(pollInterval);
-            setError(err.response?.data?.error || 'Server error. Please contact the administrator.');
-            setIsPlexLoading(false);
-            return;
-          }
-
-          // Check for timeout
-          if (attempts >= maxAttempts) {
-            clearInterval(pollInterval);
-            setError('Plex authentication timeout. Please try again.');
-            setIsPlexLoading(false);
-          }
-          // Continue polling for 400 errors (not yet authorized)
+          return;
         }
-      }, 2000);
+        // COOP isolation can report an open Plex tab as closed. Only the
+        // backend authorization result (or expiry) determines sign-in status.
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      if (active.current) throw new Error('Plex sign-in expired. Please try again.');
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to initiate Plex login');
+      setError(err.response?.data?.error || err.message || 'Failed to initiate Plex login');
       setIsPlexLoading(false);
       // Close the blank window if PIN generation failed
       if (authWindow) {
-        authWindow.close();
+        try { authWindow.close(); } catch { /* Closing an isolated Plex tab is best-effort. */ }
       }
     }
   };

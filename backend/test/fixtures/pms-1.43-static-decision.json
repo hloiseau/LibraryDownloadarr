@@ -1,0 +1,78 @@
+{
+  "MediaContainer": {
+    "allowSync": "1",
+    "generalDecisionCode": 1001,
+    "generalDecisionText": "Direct play not available; Conversion OK.",
+    "Metadata": [
+      {
+        "Media": [
+          {
+            "id": "1",
+            "videoProfile": "constrained baseline",
+            "audioChannels": 1,
+            "audioCodec": "aac",
+            "bitrate": 1429,
+            "container": "mp4",
+            "duration": 4021,
+            "height": 404,
+            "optimizedForStreaming": true,
+            "videoCodec": "h264",
+            "videoFrameRate": "24p",
+            "videoResolution": "SD",
+            "width": 720,
+            "selected": true,
+            "Part": [
+              {
+                "id": "1",
+                "videoProfile": "constrained baseline",
+                "bitrate": 1429,
+                "container": "mp4",
+                "duration": 4021,
+                "height": 404,
+                "optimizedForStreaming": true,
+                "width": 720,
+                "decision": "transcode",
+                "selected": true,
+                "Stream": [
+                  {
+                    "bitDepth": 8,
+                    "bitrate": 1345,
+                    "codec": "h264",
+                    "displayTitle": "4K",
+                    "extendedDisplayTitle": "4K (H.264 Constrained Baseline)",
+                    "frameRate": 24,
+                    "height": 404,
+                    "id": "1",
+                    "language": "English",
+                    "languageCode": "eng",
+                    "languageTag": "en",
+                    "streamType": 1,
+                    "width": 720,
+                    "decision": "transcode",
+                    "location": "direct"
+                  },
+                  {
+                    "bitrate": 84,
+                    "bitrateMode": "cbr",
+                    "channels": 1,
+                    "codec": "aac",
+                    "displayTitle": "English (AAC Mono)",
+                    "extendedDisplayTitle": "English (AAC Mono)",
+                    "id": "2",
+                    "language": "English",
+                    "languageCode": "eng",
+                    "languageTag": "en",
+                    "selected": true,
+                    "streamType": 2,
+                    "decision": "transcode",
+                    "location": "direct"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

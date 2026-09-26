@@ -22,6 +22,14 @@ LibraryDownloadarr is a modern, self-hosted web application that provides a beau
 - 📊 **Admin Dashboard** - Download history, logs, and settings management
 - 🚀 **Easy Setup** - Initial setup wizard with guided configuration
 
+### Download quality and Plex setup
+
+Video downloads can now be prepared by Plex as 720p or 1080p MP4 files, with a
+quality selector and per-user download rules. Owners can connect their server
+through Plex sign-in and explicitly select its address; friends sign in with
+their own Plex accounts. See [Download quality and Plex sign-in](DOWNLOAD-QUALITY.md)
+for setup, Plex download requirements, the identity migration and lifecycle limits.
+
 ---
 
 ## Why You Need LibraryDownloadarr
@@ -38,7 +46,7 @@ LibraryDownloadarr is a modern, self-hosted web application that provides a beau
 - **Offline Viewing**: Download movies and shows to watch without an internet connection
 - **Device Transfers**: Move media to devices that don't have Plex apps (e.g., car entertainment systems, older tablets)
 - **Data Management**: Download media to free up Plex server storage while keeping personal backups
-- **No Plex Sync Required**: Direct downloads without needing Plex Pass or configuring Plex Sync
+- **Original Downloads**: Retrieve original media through the existing direct-download path. Converted downloads use Plex Download Queue and its account permissions/entitlement requirements.
 
 ### Why Not Just Use Plex?
 

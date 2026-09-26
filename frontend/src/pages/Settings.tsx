@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Header } from '../components/Header';
 import { Sidebar } from '../components/Sidebar';
 import { api } from '../services/api';
-import { Settings as SettingsType } from '../types';
+import { Settings as SettingsType, PlexServerChoice } from '../types';
 import { useMobileMenu } from '../hooks/useMobileMenu';
 
 export const Settings: React.FC = () => {
@@ -11,6 +11,14 @@ export const Settings: React.FC = () => {
     plexUrl: '',
     hasPlexToken: false,
   });
+  const [flowId, setFlowId] = useState('');
+  const [servers, setServers] = useState<PlexServerChoice[]>([]);
+  const [serverId, setServerId] = useState('');
+  const [selectedAddress, setSelectedAddress] = useState('');
+  const [customAddress, setCustomAddress] = useState('');
+  const [connecting, setConnecting] = useState(false);
+  const active = useRef(true);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const [plexUrl, setPlexUrl] = useState('');
   const [plexToken, setPlexToken] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -39,6 +47,44 @@ export const Settings: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const connectOwner = async () => {
+    const popup = window.open('about:blank', '_blank', 'width=600,height=700');
+    if (!popup) { setMessage({ type: 'error', text: 'Allow popups, then connect with Plex again.' }); return; }
+    setConnecting(true); setServers([]); setFlowId(''); setSelectedAddress(''); setCustomAddress(''); setMessage(null);
+    try {
+      const pin = await api.connectPlexOwner();
+      popup.location.href = pin.url;
+      const deadline = Date.now() + 5 * 60 * 1000;
+      while (active.current && Date.now() < deadline) {
+        const choices = await api.getPlexOwnerServers(pin.flowId);
+        if (!active.current) return;
+        if (choices) {
+          try { popup.close(); } catch { /* Closing an isolated Plex tab is best-effort. */ }
+          if (!choices.length) throw new Error('No owned server found. Sign in with the Plex server owner account.');
+          setFlowId(pin.flowId); setServers(choices); setServerId(choices[0].id);
+          setSelectedAddress(choices[0].connections.length ? '' : 'custom');
+          return;
+        }
+        // COOP isolation can report an open Plex tab as closed. Only the
+        // backend authorization result (or expiry) determines sign-in status.
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      if (active.current) throw new Error('Plex sign-in expired. Please try again.');
+    } catch (err: any) {
+      if (active.current) setMessage({ type: 'error', text: err.response?.data?.error || err.message });
+      try { popup.close(); } catch { /* Closing an isolated Plex tab is best-effort. */ }
+    } finally { if (active.current) setConnecting(false); }
+  };
+  const selectServer = async (event: React.FormEvent) => {
+    event.preventDefault(); setIsSaving(true); setMessage(null);
+    try {
+      await api.selectPlexServer(flowId, serverId, selectedAddress === 'custom' ? customAddress : selectedAddress);
+      setServers([]); setFlowId(''); await loadSettings();
+      setMessage({ type: 'success', text: 'Plex connected. Your friends can now use Sign in with Plex.' });
+    } catch (err: any) { setMessage({ type: 'error', text: err.response?.data?.error || 'Connection failed.' }); }
+    finally { setIsSaving(false); }
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -97,8 +143,8 @@ export const Settings: React.FC = () => {
       } else {
         setMessage({ type: 'error', text: 'Failed to connect to Plex server' });
       }
-    } catch (err) {
-      setMessage({ type: 'error', text: 'Failed to test connection' });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Failed to test connection' });
     } finally {
       setIsTesting(false);
     }
@@ -169,91 +215,51 @@ export const Settings: React.FC = () => {
           <div className="max-w-3xl">
             <h1 className="text-2xl md:text-3xl font-bold mb-4 md:mb-6">Settings</h1>
 
-            <div className="card p-4 md:p-6">
-              <form onSubmit={handleSave} className="space-y-4 md:space-y-6">
-                <div>
-                  <h2 className="text-xl md:text-2xl font-semibold mb-4">Plex Server Configuration</h2>
-
-                  <div className="space-y-3 md:space-y-4">
-                    <div>
-                      <label className="block text-sm md:text-base font-medium mb-2">Plex Server URL</label>
-                      <input
-                        type="text"
-                        className="input text-sm md:text-base"
-                        placeholder="http://127.0.0.1:32400"
-                        value={plexUrl}
-                        onChange={(e) => setPlexUrl(e.target.value)}
-                      />
-                      <p className="text-xs md:text-sm text-gray-500 mt-1">
-                        The URL of your Plex Media Server. For local Docker containers, use:
-                        <br />
-                        • <code className="text-gray-400">http://127.0.0.1:32400</code> or <code className="text-gray-400">http://localhost:32400</code>
-                        <br />
-                        • <code className="text-gray-400">http://host.docker.internal:32400</code> (from Docker container)
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm md:text-base font-medium mb-2">Plex Token</label>
-                      <input
-                        type="password"
-                        className="input text-sm md:text-base"
-                        placeholder={
-                          settings.hasPlexToken ? 'Token configured (enter new to update)' : 'Enter token'
-                        }
-                        value={plexToken}
-                        onChange={(e) => setPlexToken(e.target.value)}
-                      />
-                      <p className="text-xs md:text-sm text-gray-500 mt-1">
-                        Your Plex authentication token (admin token for server access)
-                      </p>
-                    </div>
-
-                    {settings.plexServerName && (
-                      <div>
-                        <label className="block text-sm md:text-base font-medium mb-2">Configured Server</label>
-                        <input
-                          type="text"
-                          className="input text-sm md:text-base bg-dark-200"
-                          value={settings.plexServerName}
-                          readOnly
-                        />
-                        <p className="text-xs md:text-sm text-gray-500 mt-1">
-                          Server identity is automatically detected when you save your settings.
-                          Users logging in via Plex OAuth will only be granted access if they have permission to this server.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {message && (
-                  <div
-                    className={`px-4 py-3 rounded-lg text-xs md:text-sm ${
-                      message.type === 'success'
-                        ? 'bg-green-500/10 border border-green-500/20 text-green-400'
-                        : 'bg-red-500/10 border border-red-500/20 text-red-400'
-                    }`}
-                  >
-                    {message.text}
-                  </div>
-                )}
-
-                <div className="flex flex-col sm:flex-row gap-3 md:gap-4">
-                  <button type="submit" disabled={isSaving} className="btn-primary text-sm md:text-base">
-                    {isSaving ? 'Saving...' : 'Save Settings'}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleTestConnection}
-                    disabled={isTesting || !(plexUrl || settings.plexUrl)}
-                    className="btn-secondary text-sm md:text-base"
-                  >
-                    {isTesting ? 'Testing...' : 'Test Connection'}
-                  </button>
-                </div>
-              </form>
+            <div className="card p-4 md:p-6 space-y-4">
+              <h2 className="text-xl font-semibold">Plex server</h2>
+              <p className="text-gray-400">Connect once with the server owner account. Friends sign in with their own Plex account; they do not need a token or server address.</p>
+              {settings.hasPlexToken && <p>Connected: <strong>{settings.plexServerName || 'Plex server'}</strong> <span className="text-gray-400 break-all">{settings.plexUrl}</span></p>}
+              <button onClick={connectOwner} disabled={connecting || isSaving} className="btn-primary">
+                {connecting ? 'Waiting for Plex…' : settings.hasPlexToken ? 'Reconnect with Plex' : 'Connect with Plex'}
+              </button>
+              {servers.length > 0 && <form onSubmit={selectServer} className="space-y-4">
+                <label className="block">Your server
+                  <select className="input mt-1" disabled={isSaving} value={serverId} onChange={event => {
+                    const selected = servers.find(server => server.id === event.target.value)!;
+                    setServerId(selected.id);
+                    setSelectedAddress(selected.connections.length ? '' : 'custom');
+                    setCustomAddress(''); setMessage(null);
+                  }}>{servers.map(server => <option key={server.id} value={server.id}>{server.name}</option>)}</select>
+                </label>
+                <label className="block" htmlFor="plex-address">Server address</label>
+                <select id="plex-address" className="input mt-1" required disabled={isSaving} value={selectedAddress}
+                  onChange={event => { setSelectedAddress(event.target.value); setMessage(null); }}>
+                  <option value="" disabled>Select an address…</option>
+                  {servers.find(server => server.id === serverId)?.connections.map(connection => (
+                    <option key={connection.url} value={connection.url}>
+                      {connection.relay ? 'Relay' : connection.local ? 'Local' : 'Remote'} · {connection.url.startsWith('https:') ? 'HTTPS' : 'HTTP'} · {connection.url}
+                    </option>
+                  ))}
+                  <option value="custom">Custom address…</option>
+                </select>
+                {selectedAddress === 'custom' && <label className="block" htmlFor="plex-custom-address">Custom Plex URL
+                  <input id="plex-custom-address" className="input mt-1" type="url" required disabled={isSaving}
+                    value={customAddress} onChange={event => setCustomAddress(event.target.value)} placeholder="http://192.168.1.10:32400" />
+                </label>}
+                <p className="text-sm text-gray-400">Choose the address to use from LibraryDownloadarr. Only this address is tested and saved. You can select another if the connection fails.</p>
+                <button className="btn-primary" disabled={isSaving || !selectedAddress || (selectedAddress === 'custom' && !customAddress.trim())}>
+                  {isSaving ? 'Checking selected address…' : 'Test and use this address'}
+                </button>
+              </form>}
+              {message && <p role="status" className={message.type === 'error' ? 'text-red-400 break-words' : 'text-green-400'}>{message.text}</p>}
+              <details className="pt-3 border-t border-dark-50">
+                <summary className="cursor-pointer text-sm text-gray-400">Advanced: manual connection</summary>
+                <form onSubmit={handleSave} className="space-y-4 mt-4">
+                  <label className="block">Plex URL<input type="url" className="input mt-1" value={plexUrl} onChange={event => setPlexUrl(event.target.value)} /></label>
+                  <label className="block">Plex token<input type="password" className="input mt-1" value={plexToken} onChange={event => setPlexToken(event.target.value)} placeholder={settings.hasPlexToken ? 'Leave empty to keep saved token' : 'Server owner token'} /></label>
+                  <div className="flex gap-3"><button disabled={isSaving} className="btn-primary">Save</button><button type="button" onClick={handleTestConnection} disabled={isTesting} className="btn-secondary">{isTesting ? 'Testing…' : 'Test connection'}</button></div>
+                </form>
+              </details>
             </div>
 
             <div className="card p-4 md:p-6 mt-4 md:mt-6">

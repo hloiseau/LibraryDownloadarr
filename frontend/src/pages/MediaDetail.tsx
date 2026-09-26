@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { Header } from '../components/Header';
 import { Sidebar } from '../components/Sidebar';
 import { api } from '../services/api';
-import { MediaItem } from '../types';
+import { MediaItem, DownloadQuality, DownloadPolicy } from '../types';
 import { useDownloads } from '../contexts/DownloadContext';
 import { useMobileMenu } from '../hooks/useMobileMenu';
 
@@ -18,7 +18,15 @@ export const MediaDetail: React.FC = () => {
   const [tracks, setTracks] = useState<MediaItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  const [policy, setPolicy] = useState<DownloadPolicy | null>(null);
+  const [quality, setQuality] = useState<DownloadQuality>(() => {
+    const saved = localStorage.getItem('downloadQuality');
+    return ['original', '720p-2', '720p-4', '1080p-8'].includes(saved || '') ? saved as DownloadQuality : 'original';
+  });
+  const videoQuality: DownloadQuality = media && ['movie', 'episode', 'season', 'show'].includes(media.type) ? quality : 'original';
 
+  const canDownload = !!policy?.enabled && policy.qualities.includes(videoQuality) &&
+    (policy.libraries === null || policy.libraries.includes(String(media?.librarySectionID || '')));
   useEffect(() => {
     if (ratingKey) {
       loadMediaDetails();
@@ -32,7 +40,9 @@ export const MediaDetail: React.FC = () => {
     setError('');
 
     try {
-      const metadata = await api.getMediaMetadata(ratingKey);
+      const [metadata, rights] = await Promise.all([api.getMediaMetadata(ratingKey), api.getMyDownloadPolicy()]);
+      setPolicy(rights);
+      setQuality(current => rights.qualities.includes(current) ? current : rights.qualities[0] || 'original');
       setMedia(metadata);
 
       // If it's a TV show, load seasons
@@ -82,7 +92,15 @@ export const MediaDetail: React.FC = () => {
 
   // Helper function to check if a download is in progress for a given part
   const isDownloading = (partKey: string): boolean => {
-    return downloads.some(d => d.partKey === partKey && d.status === 'downloading');
+    return downloads.some(d => d.partKey === partKey && ['downloading', 'preparing', 'ready', 'sending'].includes(d.status));
+  };
+
+  const downloadLabel = (partKey: string): string => {
+    const item = downloads.find(d => d.partKey === partKey);
+    if (item?.status === 'preparing') return 'Preparing…';
+    if (item?.status === 'ready') return 'Ready — save above';
+    if (item?.status === 'sending') return 'Starting…';
+    return `${item?.progress || 0}%`;
   };
 
   // Helper function to get download progress for a given part
@@ -92,9 +110,10 @@ export const MediaDetail: React.FC = () => {
   };
 
   const handleDownload = async (itemRatingKey: string, partKey: string, filename: string, itemTitle: string, fileSize?: number) => {
+    if (!canDownload) return;
     // Check file size and warn if over 10GB
     const tenGB = 10737418240;
-    if (fileSize && fileSize > tenGB) {
+    if (videoQuality === 'original' && fileSize && fileSize > tenGB) {
       const sizeGB = (fileSize / 1073741824).toFixed(2);
       const confirmed = window.confirm(
         `This file is ${sizeGB} GB. Large downloads may take a long time and use significant bandwidth.\n\nDo you want to continue?`
@@ -105,11 +124,17 @@ export const MediaDetail: React.FC = () => {
     }
 
     // Use the global download context with the specific item's rating key
-    await startDownload(itemRatingKey, partKey, filename, itemTitle);
+    await startDownload(itemRatingKey, partKey, filename, itemTitle, videoQuality);
   };
 
   const handleSeasonDownload = async (seasonRatingKey: string, seasonTitle: string) => {
+    if (!canDownload) return;
     try {
+      if (videoQuality !== 'original') {
+        await startDownload(seasonRatingKey, api.getSeasonDownloadUrl(seasonRatingKey),
+          `${seasonTitle}.zip`, `${seasonTitle} (Full Season)`, videoQuality);
+        return;
+      }
       // Get size info first
       const sizeInfo = await api.getSeasonSize(seasonRatingKey);
 
@@ -137,6 +162,7 @@ export const MediaDetail: React.FC = () => {
   };
 
   const handleAlbumDownload = async (albumRatingKey: string, albumTitle: string) => {
+    if (!canDownload) return;
     try {
       // Get size info first
       const sizeInfo = await api.getAlbumSize(albumRatingKey);
@@ -269,13 +295,14 @@ export const MediaDetail: React.FC = () => {
                   )}
 
                   {/* Download Options */}
+                  {!canDownload && <p className="text-amber-400 mt-4">Downloads are unavailable for this library or quality with your current permissions.</p>}
                   <div className="mt-4 md:mt-8">
                     <div className="flex items-center justify-between mb-4">
                       <h2 className="text-xl md:text-2xl font-semibold">Download</h2>
                       {media.type === 'album' && tracks.length > 0 && (
                         <button
                           onClick={() => handleAlbumDownload(ratingKey!, media.title)}
-                          disabled={isDownloading(api.getAlbumDownloadUrl(ratingKey!))}
+                          disabled={!canDownload || isDownloading(api.getAlbumDownloadUrl(ratingKey!))}
                           className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
                           title="Download entire album as ZIP"
                         >
@@ -285,6 +312,30 @@ export const MediaDetail: React.FC = () => {
                         </button>
                       )}
                     </div>
+
+                    {['movie', 'episode', 'season', 'show'].includes(media.type) && (
+                      <div className="mb-5 space-y-2">
+                        <label htmlFor="download-quality" className="block text-sm font-medium">Download quality</label>
+                        <select id="download-quality" value={quality}
+                          onChange={event => {
+                            const selected = event.target.value as DownloadQuality;
+                            setQuality(selected); localStorage.setItem('downloadQuality', selected);
+                          }}
+                          className="w-full md:w-auto rounded-lg border border-dark-50 bg-dark-200 px-3 py-2 text-white">
+                          <option disabled={!policy?.qualities.includes('original')} value="original">Original file</option>
+                          <option disabled={!policy?.qualities.includes('720p-2')} value="720p-2">720p · 2 Mbps</option>
+                          <option disabled={!policy?.qualities.includes('720p-4')} value="720p-4">720p · 4 Mbps</option>
+                          <option disabled={!policy?.qualities.includes('1080p-8')} value="1080p-8">1080p · 8 Mbps</option>
+                        </select>
+                        {quality !== 'original' && (
+                          <p className="text-xs text-gray-400 max-w-lg">
+                            Plex prepares an MP4 before you save it. The selected audio and subtitles follow your Plex preferences;
+                            selected subtitles are burned in. Sizes shown below are for the original files.
+                            Keep this page open during preparation.
+                          </p>
+                        )}
+                      </div>
+                    )}
 
                     {media.type === 'album' ? (
                       // Album (Audiobook) - Show tracks
@@ -321,11 +372,11 @@ export const MediaDetail: React.FC = () => {
                                         track.Media![0].Part[0].size
                                       )
                                     }
-                                    disabled={isDownloading(track.Media![0].Part[0].key)}
+                                    disabled={!canDownload || isDownloading(track.Media![0].Part[0].key)}
                                     className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
                                   >
                                     {isDownloading(track.Media![0].Part[0].key)
-                                      ? `${getDownloadProgress(track.Media![0].Part[0].key)}%`
+                                      ? downloadLabel(track.Media![0].Part[0].key)
                                       : 'Download'}
                                   </button>
                                   {isDownloading(track.Media![0].Part[0].key) && (
@@ -383,11 +434,11 @@ export const MediaDetail: React.FC = () => {
                                         episode.Media![0].Part[0].size
                                       )
                                     }
-                                    disabled={isDownloading(episode.Media![0].Part[0].key)}
+                                    disabled={!canDownload || isDownloading(episode.Media![0].Part[0].key)}
                                     className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
                                   >
                                     {isDownloading(episode.Media![0].Part[0].key)
-                                      ? `${getDownloadProgress(episode.Media![0].Part[0].key)}%`
+                                      ? downloadLabel(episode.Media![0].Part[0].key)
                                       : 'Download'}
                                   </button>
                                   {isDownloading(episode.Media![0].Part[0].key) && (
@@ -441,12 +492,12 @@ export const MediaDetail: React.FC = () => {
                                     e.stopPropagation();
                                     handleSeasonDownload(season.ratingKey, season.title);
                                   }}
-                                  disabled={isDownloading(api.getSeasonDownloadUrl(season.ratingKey))}
+                                  disabled={!canDownload || isDownloading(api.getSeasonDownloadUrl(season.ratingKey))}
                                   className="btn-primary ml-2 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap text-sm md:text-base px-3 md:px-4 py-2"
                                   title="Download entire season as ZIP"
                                 >
                                   {isDownloading(api.getSeasonDownloadUrl(season.ratingKey))
-                                    ? '⏳ Zipping...'
+                                    ? downloadLabel(api.getSeasonDownloadUrl(season.ratingKey))
                                     : '📦 Season'}
                                 </button>
                               </div>
@@ -489,11 +540,11 @@ export const MediaDetail: React.FC = () => {
                                                   episode.Media![0].Part[0].size
                                                 )
                                               }
-                                              disabled={isDownloading(episode.Media![0].Part[0].key)}
+                                              disabled={!canDownload || isDownloading(episode.Media![0].Part[0].key)}
                                               className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
                                             >
                                               {isDownloading(episode.Media![0].Part[0].key)
-                                                ? `${getDownloadProgress(episode.Media![0].Part[0].key)}%`
+                                                ? downloadLabel(episode.Media![0].Part[0].key)
                                                 : 'Download'}
                                             </button>
                                             {isDownloading(episode.Media![0].Part[0].key) && (
@@ -549,11 +600,11 @@ export const MediaDetail: React.FC = () => {
                                           part.size
                                         )
                                       }
-                                      disabled={isDownloading(part.key)}
+                                      disabled={!canDownload || isDownloading(part.key)}
                                       className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                       {isDownloading(part.key)
-                                        ? `${getDownloadProgress(part.key)}%`
+                                        ? downloadLabel(part.key)
                                         : 'Download'}
                                     </button>
                                     {isDownloading(part.key) && (

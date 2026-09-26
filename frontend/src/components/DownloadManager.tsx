@@ -2,7 +2,7 @@ import React from 'react';
 import { useDownloads } from '../contexts/DownloadContext';
 
 export const DownloadManager: React.FC = () => {
-  const { downloads, removeDownload } = useDownloads();
+  const { downloads, removeDownload, savePreparedDownload } = useDownloads();
 
   if (downloads.length === 0) {
     return null;
@@ -22,12 +22,29 @@ export const DownloadManager: React.FC = () => {
             </div>
             <button
               onClick={() => removeDownload(download.id)}
+              aria-label={download.status === 'preparing' || download.status === 'ready' ? 'Cancel download' : 'Dismiss download'}
               className="text-gray-400 hover:text-white transition-colors flex-shrink-0"
             >
               ✕
             </button>
           </div>
 
+          {download.status === 'preparing' && (
+            <div className="text-xs text-primary-400" role="status">
+              Preparing with Plex… {download.fileCount ? `${download.readyCount || 0} / ${download.fileCount} files ready` : ''}
+            </div>
+          )}
+          {download.status === 'ready' && (
+            <div className="space-y-2">
+              <p className="text-xs text-green-400">Converted file ready</p>
+              {download.error && <p className="text-xs text-red-400">{download.error}</p>}
+              <button className="btn-primary text-sm" onClick={() => savePreparedDownload(download.id)}>Save file</button>
+            </div>
+          )}
+          {download.status === 'sending' && <p className="text-xs text-primary-400">Starting download…</p>}
+          {download.status === 'handedOff' && (
+            <p className="text-xs text-gray-300">Sent to your browser. Check its download manager for progress.</p>
+          )}
           {download.status === 'downloading' && (
             <>
               {download.isBulkDownload ? (
