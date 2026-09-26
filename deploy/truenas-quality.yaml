@@ -1,10 +1,10 @@
 # TrueNAS 25.10: Apps > Discover > menu > Install via YAML.
 # Replace NAS_LAN_IP and the two dataset paths before saving.
-# Image built from commit ff72532; pinned to the verified published digest.
+# Image built from commit 28fb1f5; pinned to the verified published digest.
 # This preview uses a separate port and data directory from any existing app.
 services:
   librarydownloadarr-quality:
-    image: ghcr.io/hloiseau/librarydownloadarr@sha256:91275a5248e76347da095df5f330ad90871a56060e1d71b2ca83e10d8f66e47c
+    image: ghcr.io/hloiseau/librarydownloadarr@sha256:80740cd01898a457ad64d444b1c95a4f92bdb963f082924526c01b1711f36055
     restart: unless-stopped
     ports:
       - "NAS_LAN_IP:5070:5069"

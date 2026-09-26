@@ -43,8 +43,8 @@ Connection failures now identify the selected endpoint and whether the failure
 was DNS, a refused port, timeout, HTTPS certificate validation, an HTTP refusal,
 or an unexpected API response. The app accepts JSON/XML identity responses and
 can authenticate an identity request at the exact URL advertised by an owned
-server. A custom URL must identify the expected Plex server before receiving the
-Plex token. TLS validation remains enabled and HTTP redirects are not followed.
+server. During owner setup, a custom URL must identify the expected Plex server
+before receiving the Plex token. TLS validation remains enabled and HTTP redirects are not followed.
 
 ## Diagnosing a failed conversion
 
@@ -112,10 +112,9 @@ the error response; go back to the app to retry.
 
 ## Try the updated preview on your computer
 
-Published application commit: `ff72532`. Verification covers 23 backend tests
-and six popup regression tests; the latter passed again inside this image build.
-Anonymous image access was verified. Build:
-https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36251526231
+Published application commit: `28fb1f5`. All 27 backend tests and seven frontend
+tests passed in this Docker build. Anonymous image access was verified. Build:
+https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36252946516
 
 To keep an earlier test container intact, launch this version on port 5071 with
 its own persistent data volume:
