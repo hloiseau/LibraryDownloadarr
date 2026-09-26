@@ -1,5 +1,6 @@
 import { randomBytes } from 'crypto';
-import axios from 'axios';
+import { checkPlexConnection, normalizePlexUrl } from './plexConnection';
+export { normalizePlexUrl } from './plexConnection';
 import { PlexAuthResponse, PlexService } from './plexService';
 import { DownloadError } from './downloadService';
 
@@ -17,13 +18,19 @@ export function serverToken(server: any, accountToken: string): string {
   if (enabled(server.owned)) return accountToken;
   throw new DownloadError(403, 'Plex did not grant a token for this shared server.');
 }
-export function normalizePlexUrl(value: string): string {
-  let url: URL;
-  try { url = new URL(value); } catch { throw new DownloadError(400, 'Enter a complete HTTP or HTTPS Plex URL.'); }
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
-    throw new DownloadError(400, 'Invalid Plex server URL.');
+function serverConnections(server: any): { url: string; local: boolean; relay: boolean }[] {
+  const entries = server.Connection || server.connections || [];
+  const seen = new Set<string>();
+  const connections: { url: string; local: boolean; relay: boolean }[] = [];
+  for (const entry of Array.isArray(entries) ? entries : [entries]) {
+    try {
+      const url = normalizePlexUrl(entry.uri);
+      if (seen.has(url)) continue;
+      seen.add(url);
+      connections.push({ url, local: enabled(entry.local), relay: enabled(entry.relay) });
+    } catch { /* Ignore unusable resource entries; the owner can enter a URL. */ }
   }
-  return url.toString().replace(/\/$/, '');
+  return connections;
 }
 
 export class PlexAuthFlows {
@@ -51,6 +58,7 @@ export class PlexAuthFlows {
       const auth = await this.provider.checkPin(flow.pinId, this.clientId);
       if (!auth) return null;
       flow.auth = auth;
+      if (flow.sessionId) flow.expires = Date.now() + 15 * 60 * 1000;
     }
     if (!flow.servers) flow.servers = await this.provider.getUserServers(flow.auth.authToken);
     return { auth: flow.auth, servers: flow.servers };
@@ -58,31 +66,31 @@ export class PlexAuthFlows {
   async ownedServers(flowId: string, sessionId: string) {
     const result = await this.authorize(flowId, sessionId);
     if (!result) return null;
-    return result.servers.filter(server => serverDevice(server) && enabled(server.owned)).map(server => {
-      const connections = server.Connection || server.connections || [];
-      return { id: server.clientIdentifier, name: server.name || 'Plex server',
-        connections: (Array.isArray(connections) ? connections : [connections])
-          .filter((connection: any) => typeof connection.uri === 'string')
-          .map((connection: any) => ({ url: connection.uri, local: enabled(connection.local) })) };
-    });
+    return result.servers.filter(server => serverDevice(server) && enabled(server.owned)).map(server => ({
+      id: server.clientIdentifier, name: server.name || 'Plex server', connections: serverConnections(server),
+    }));
   }
-  async configure(flowId: string, sessionId: string, id: string, address: string) {
+
+  async configure(flowId: string, sessionId: string, id: string, address?: string) {
     const flow = this.get(flowId, sessionId);
     if (flow.busy) throw new DownloadError(409, 'Connection is already being checked.');
     if (!flow.auth || !flow.servers) throw new DownloadError(400, 'Complete Plex sign-in first.');
     const server = exactServer(flow.servers, id);
     if (!enabled(server.owned)) throw new DownloadError(403, 'Connect with the owner of this Plex server.');
-    const url = normalizePlexUrl(address);
+    if (typeof address !== 'string' || !address.trim()) throw new DownloadError(400, 'Select a Plex address or enter a custom address.');
+    const url = normalizePlexUrl(address.trim());
+    if (enabled(server.httpsRequired) && !url.startsWith('https://')) {
+      throw new DownloadError(400, 'This Plex server requires HTTPS. Choose one of its advertised HTTPS addresses.');
+    }
     const token = serverToken(server, flow.auth.authToken);
     flow.busy = true;
     try {
-      // Probe identity without credentials before sending a token to a custom URL.
-      const identity = await axios.get(`${url}/identity`, { timeout: 10000, maxRedirects: 0, headers: { Accept: 'application/json' } });
-      if (identity.data.MediaContainer?.machineIdentifier !== id) throw new DownloadError(400, 'This address belongs to a different Plex server.');
-      await axios.get(`${url}/library/sections`, { timeout: 10000, maxRedirects: 0,
-        headers: { Accept: 'application/json', 'X-Plex-Token': token } });
+      // Test exactly the owner's selection. A failure must never switch to
+      // another advertised connection or consume the flow needed for retrying.
+      const connection = await checkPlexConnection(url, token, id,
+        serverConnections(server).some(entry => entry.url === url));
       this.flows.delete(flowId);
-      return { url, token, machineId: id, name: server.name || 'Plex server' };
+      return { ...connection, name: server.name || connection.name };
     } finally { flow.busy = false; }
   }
   consume(flowId: string): void { this.flows.delete(flowId); }

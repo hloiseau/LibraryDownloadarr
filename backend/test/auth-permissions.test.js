@@ -1,3 +1,4 @@
+const { checkPlexConnection, plexConnectionFailure } = require('../dist/services/plexConnection');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
@@ -198,4 +199,66 @@ test('original and bulk download routes enforce policy and reject forged part ke
   }
   db.setSetting(`download_policy:${user.id}`, JSON.stringify({ ...policy, qualities: ['original'] }));
   assert.equal((await call('/media/1/download?partKey=%2Flibrary%2Fparts%2F999%2Ffile.mkv', undefined, session.token)).status, 400);
+});
+
+
+test('owner explicitly chooses one address; failure never tries another and remains retryable', async t => {
+  const calls = [];
+  const failed = await listen(t, (req, res) => { calls.push(['failed', req.url]); res.writeHead(503); res.end(); });
+  const working = await listen(t, (req, res) => {
+    calls.push(['working', req.url]); res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ MediaContainer: { machineIdentifier: 'server-1', Directory: [] } }));
+  });
+  const flows = new PlexAuthFlows(provider({ getUserServers: async () => [{ provides: 'server', owned: '1',
+    clientIdentifier: 'server-1', name: 'NAS', accessToken: 'private-token', Connection: [
+      { uri: failed, local: '1' }, { uri: working, local: '0' }, { uri: 'https://relay.example.test', relay: '1' },
+    ] }] }), 'installation');
+  const pin = await flows.start('admin-session');
+  const choices = await flows.ownedServers(pin.flowId, 'admin-session');
+  assert.equal(choices[0].connections.length, 3); assert.equal(choices[0].connections[2].relay, true);
+  assert.equal(calls.length, 0);
+  await assert.rejects(flows.configure(pin.flowId, 'admin-session', 'server-1', ''), { status: 400 });
+  assert.equal(calls.length, 0);
+  await assert.rejects(flows.configure(pin.flowId, 'admin-session', 'server-1', failed), error => error.code === 'HTTP_503');
+  assert.deepEqual(calls, [['failed', '/identity']]);
+  const connection = await flows.configure(pin.flowId, 'admin-session', 'server-1', working);
+  assert.equal(connection.url, working);
+  assert.deepEqual(calls.slice(1), [['working', '/identity'], ['working', '/library/sections']]);
+});
+
+test('Plex connection accepts XML identity and reports denied library access without credentials', async t => {
+  const url = await listen(t, (req, res) => {
+    if (req.url === '/identity') {
+      res.setHeader('Content-Type', 'application/xml');
+      return res.end('<?xml version="1.0"?><MediaContainer machineIdentifier="server-1" />');
+    }
+    res.writeHead(403); res.end('sensitive-token-in-upstream-body');
+  });
+  await assert.rejects(checkPlexConnection(url, 'secret-server-token', 'server-1'), error => {
+    assert.equal(error.code, 'HTTP_403'); assert.equal(error.stage, 'library access');
+    assert.match(error.message, /HTTP 403/); assert.doesNotMatch(error.message, /secret-server-token|sensitive-token/);
+    return true;
+  });
+});
+
+test('identity requiring authentication is retried only for a trusted advertised connection', async t => {
+  const tokens = [];
+  const url = await listen(t, (req, res) => {
+    tokens.push(req.headers['x-plex-token']);
+    if (!req.headers['x-plex-token']) { res.writeHead(401); return res.end(); }
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ MediaContainer: { machineIdentifier: 'server-1', Directory: [] } }));
+  });
+  await assert.rejects(checkPlexConnection(url, 'secret', 'server-1', false), { code: 'HTTP_401' });
+  assert.deepEqual(tokens, [undefined]);
+  assert.equal((await checkPlexConnection(url, 'secret', 'server-1', true)).machineId, 'server-1');
+  assert.deepEqual(tokens.slice(1), [undefined, 'secret', 'secret']);
+});
+
+test('connection diagnostics distinguish DNS, refused port, TLS and timeout without raw Axios data', () => {
+  for (const [code, expected] of [['ENOTFOUND','ENOTFOUND'], ['ECONNREFUSED','ECONNREFUSED'], ['ERR_TLS_CERT_ALTNAME_INVALID','TLS_CERTIFICATE'], ['ECONNABORTED','TIMEOUT']]) {
+    const error = plexConnectionFailure({ isAxiosError: true, code, message: 'private-token', config: { headers: { 'X-Plex-Token': 'private-token' } } }, 'https://nas.example.test:32400', 'server identity');
+    assert.equal(error.code, expected); assert.doesNotMatch(error.message, /private-token/);
+    assert.match(error.message, /nas.example.test:32400/);
+  }
 });

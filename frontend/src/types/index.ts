@@ -92,7 +92,7 @@ export interface PreparedDownload {
 export interface PlexServerChoice {
   id: string;
   name: string;
-  connections: { url: string; local: boolean }[];
+  connections: { url: string; local: boolean; relay?: boolean }[];
 }
 export interface DownloadPolicy {
   enabled: boolean;

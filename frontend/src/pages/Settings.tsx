@@ -14,6 +14,8 @@ export const Settings: React.FC = () => {
   const [flowId, setFlowId] = useState('');
   const [servers, setServers] = useState<PlexServerChoice[]>([]);
   const [serverId, setServerId] = useState('');
+  const [selectedAddress, setSelectedAddress] = useState('');
+  const [customAddress, setCustomAddress] = useState('');
   const [connecting, setConnecting] = useState(false);
   const active = useRef(true);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
@@ -50,7 +52,7 @@ export const Settings: React.FC = () => {
   const connectOwner = async () => {
     const popup = window.open('about:blank', '_blank', 'width=600,height=700');
     if (!popup) { setMessage({ type: 'error', text: 'Allow popups, then connect with Plex again.' }); return; }
-    setConnecting(true); setServers([]); setFlowId(''); setMessage(null);
+    setConnecting(true); setServers([]); setFlowId(''); setSelectedAddress(''); setCustomAddress(''); setMessage(null);
     try {
       const pin = await api.connectPlexOwner();
       popup.location.href = pin.url;
@@ -62,7 +64,7 @@ export const Settings: React.FC = () => {
           try { popup.close(); } catch { /* Closing an isolated Plex tab is best-effort. */ }
           if (!choices.length) throw new Error('No owned server found. Sign in with the Plex server owner account.');
           setFlowId(pin.flowId); setServers(choices); setServerId(choices[0].id);
-          setPlexUrl((choices[0].connections.find(item => item.local) || choices[0].connections[0])?.url || '');
+          setSelectedAddress(choices[0].connections.length ? '' : 'custom');
           return;
         }
         // COOP isolation can report an open Plex tab as closed. Only the
@@ -78,7 +80,7 @@ export const Settings: React.FC = () => {
   const selectServer = async (event: React.FormEvent) => {
     event.preventDefault(); setIsSaving(true); setMessage(null);
     try {
-      await api.selectPlexServer(flowId, serverId, plexUrl);
+      await api.selectPlexServer(flowId, serverId, selectedAddress === 'custom' ? customAddress : selectedAddress);
       setServers([]); setFlowId(''); await loadSettings();
       setMessage({ type: 'success', text: 'Plex connected. Your friends can now use Sign in with Plex.' });
     } catch (err: any) { setMessage({ type: 'error', text: err.response?.data?.error || 'Connection failed.' }); }
@@ -141,8 +143,8 @@ export const Settings: React.FC = () => {
       } else {
         setMessage({ type: 'error', text: 'Failed to connect to Plex server' });
       }
-    } catch (err) {
-      setMessage({ type: 'error', text: 'Failed to test connection' });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Failed to test connection' });
     } finally {
       setIsTesting(false);
     }
@@ -222,18 +224,32 @@ export const Settings: React.FC = () => {
               </button>
               {servers.length > 0 && <form onSubmit={selectServer} className="space-y-4">
                 <label className="block">Your server
-                  <select className="input mt-1" value={serverId} onChange={event => {
+                  <select className="input mt-1" disabled={isSaving} value={serverId} onChange={event => {
                     const selected = servers.find(server => server.id === event.target.value)!;
                     setServerId(selected.id);
-                    setPlexUrl((selected.connections.find(item => item.local) || selected.connections[0])?.url || '');
+                    setSelectedAddress(selected.connections.length ? '' : 'custom');
+                    setCustomAddress(''); setMessage(null);
                   }}>{servers.map(server => <option key={server.id} value={server.id}>{server.name}</option>)}</select>
                 </label>
-                <label className="block">Server address
-                  <input className="input mt-1" type="url" required value={plexUrl} onChange={event => setPlexUrl(event.target.value)} list="plex-addresses" placeholder="http://192.168.1.10:32400" />
-                </label>
-                <datalist id="plex-addresses">{servers.find(server => server.id === serverId)?.connections.map(connection => <option key={connection.url} value={connection.url} />)}</datalist>
-                <p className="text-sm text-gray-400">Use an address reachable from LibraryDownloadarr, usually your NAS LAN address and Plex port. In a container, localhost refers to the container itself.</p>
-                <button className="btn-primary" disabled={isSaving}>{isSaving ? 'Checking…' : 'Use this server'}</button>
+                <label className="block" htmlFor="plex-address">Server address</label>
+                <select id="plex-address" className="input mt-1" required disabled={isSaving} value={selectedAddress}
+                  onChange={event => { setSelectedAddress(event.target.value); setMessage(null); }}>
+                  <option value="" disabled>Select an address…</option>
+                  {servers.find(server => server.id === serverId)?.connections.map(connection => (
+                    <option key={connection.url} value={connection.url}>
+                      {connection.relay ? 'Relay' : connection.local ? 'Local' : 'Remote'} · {connection.url.startsWith('https:') ? 'HTTPS' : 'HTTP'} · {connection.url}
+                    </option>
+                  ))}
+                  <option value="custom">Custom address…</option>
+                </select>
+                {selectedAddress === 'custom' && <label className="block" htmlFor="plex-custom-address">Custom Plex URL
+                  <input id="plex-custom-address" className="input mt-1" type="url" required disabled={isSaving}
+                    value={customAddress} onChange={event => setCustomAddress(event.target.value)} placeholder="http://192.168.1.10:32400" />
+                </label>}
+                <p className="text-sm text-gray-400">Choose the address to use from LibraryDownloadarr. Only this address is tested and saved. You can select another if the connection fails.</p>
+                <button className="btn-primary" disabled={isSaving || !selectedAddress || (selectedAddress === 'custom' && !customAddress.trim())}>
+                  {isSaving ? 'Checking selected address…' : 'Test and use this address'}
+                </button>
               </form>}
               {message && <p role="status" className={message.type === 'error' ? 'text-red-400 break-words' : 'text-green-400'}>{message.text}</p>}
               <details className="pt-3 border-t border-dark-50">

@@ -786,3 +786,10 @@ COOP can detach the popup reference while the real tab stays open. Closing the
 popup is best-effort and must not discard successful backend authorization.
 Run `cd frontend && npm test` for the page-handler regression tests; Docker runs
 them before the frontend build.
+
+Plex address selection: the owner explicitly selects an advertised Local/Remote/
+Relay URL or enters a custom URL. Test and save only that URL; never silently
+fall back to another connection. `plexConnection.ts` handles identity/library
+checks and safe error classification. Retain failed flows for address retries.
+Custom URLs must identify the expected server before a token is sent; only exact
+advertised connections may retry a denied identity request with authentication.

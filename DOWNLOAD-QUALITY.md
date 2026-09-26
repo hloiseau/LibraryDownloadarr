@@ -7,8 +7,12 @@ Original and audio downloads remain available subject to the new download permis
 ## Connection and download permissions
 
 1. Create the local administrator once, then open **Settings → Connect with Plex**.
-2. Authorize using the Plex server owner's account. Select the server and an
-   address reachable from this app (normally the NAS LAN address and Plex port).
+2. Authorize using the Plex server owner's account. Select the server, then choose
+   an address from the **Server address** dropdown. Each choice shows its full URL,
+   HTTP/HTTPS and Local/Remote/Relay type. **Custom address…** accepts a NAS LAN URL
+   or another address you supply. Click **Test and use this address**. Only that
+   address is tested and saved; a failed check keeps your selection and permits
+   another choice without signing in again (the authorized setup lasts 15 minutes).
    No manual token extraction is needed. Manual setup remains under Advanced.
 3. Friends open the app and choose **Sign in with Plex** using their own accounts.
    They must already have access to the exact configured server in Plex.
@@ -34,6 +38,13 @@ survive logouts and restarts. Owner authorization flows are bound to the admin
 session; Plex tokens stay on the backend. Popup isolation or a closed Plex tab
 does not cancel authorization polling. The app waits for the backend result or
 expiry; an unsuccessful attempt to close a popup cannot discard a valid login.
+
+Connection failures now identify the selected endpoint and whether the failure
+was DNS, a refused port, timeout, HTTPS certificate validation, an HTTP refusal,
+or an unexpected API response. The app accepts JSON/XML identity responses and
+can authenticate an identity request at the exact URL advertised by an owned
+server. A custom URL must identify the expected Plex server before receiving the
+Plex token. TLS validation remains enabled and HTTP redirects are not followed.
 
 ## Diagnosing a failed conversion
 
@@ -187,9 +198,10 @@ and season ZIP contents. Additional tests cover stable account identity, strict
 server selection, session-bound owner setup, migration, default/user policies,
 original and bulk-route enforcement, and safe diagnostics. These use SQLite,
 Express and simulated Plex responses; they do not validate live Plex OAuth,
-a real PMS transcode or GPU use. Six frontend page-handler tests simulate
+a real PMS transcode or GPU use. Seven frontend page-handler tests simulate
 isolated popup references and backend authorization/denial for both friend login
-and owner setup. They run in the Docker build and do not use a live Plex account.
+and owner setup, including explicit address selection and retry with a custom
+URL. They run in the Docker build and do not use a live Plex account.
 
 References:
 - https://developer.plex.tv/pms/ (Download Queue and Profile Augmentations)
