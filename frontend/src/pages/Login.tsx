@@ -64,14 +64,15 @@ export const Login: React.FC = () => {
         const response = await api.authenticatePlexPin(pin.flowId);
         if (!active.current) return;
         if (response) {
-          authWindow.close();
+          try { authWindow.close(); } catch { /* Closing an isolated Plex tab is best-effort. */ }
           setUser(response.user);
           setToken(response.token);
           setIsPlexLoading(false);
           navigate('/');
           return;
         }
-        if (authWindow.closed) throw new Error('Plex sign-in was closed. Please try again.');
+        // COOP isolation can report an open Plex tab as closed. Only the
+        // backend authorization result (or expiry) determines sign-in status.
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
       if (active.current) throw new Error('Plex sign-in expired. Please try again.');
@@ -80,7 +81,7 @@ export const Login: React.FC = () => {
       setIsPlexLoading(false);
       // Close the blank window if PIN generation failed
       if (authWindow) {
-        authWindow.close();
+        try { authWindow.close(); } catch { /* Closing an isolated Plex tab is best-effort. */ }
       }
     }
   };

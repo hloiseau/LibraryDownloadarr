@@ -25,8 +25,8 @@ RUN npm ci
 # Copy frontend source
 COPY frontend/ ./
 
-# Build frontend
-RUN npm run build
+# Verify the Plex popup flow, then build the frontend
+RUN npm test && npm run build
 
 # Production stage
 FROM node:20-alpine

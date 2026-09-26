@@ -780,3 +780,9 @@ caller's effective policy. Enforce rules on ALL original and converted routes,
 including ZIPs and again before handing out prepared media. These rules restrict
 downloads, not Plex library visibility. Do not cache `/api/` in the service worker.
 Plex failures expose only whitelisted, redacted decision text and codes.
+
+Plex popup isolation: never use `window.closed` to end authorization polling.
+COOP can detach the popup reference while the real tab stays open. Closing the
+popup is best-effort and must not discard successful backend authorization.
+Run `cd frontend && npm test` for the page-handler regression tests; Docker runs
+them before the frontend build.

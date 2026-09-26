@@ -59,19 +59,20 @@ export const Settings: React.FC = () => {
         const choices = await api.getPlexOwnerServers(pin.flowId);
         if (!active.current) return;
         if (choices) {
-          popup.close();
+          try { popup.close(); } catch { /* Closing an isolated Plex tab is best-effort. */ }
           if (!choices.length) throw new Error('No owned server found. Sign in with the Plex server owner account.');
           setFlowId(pin.flowId); setServers(choices); setServerId(choices[0].id);
           setPlexUrl((choices[0].connections.find(item => item.local) || choices[0].connections[0])?.url || '');
           return;
         }
-        if (popup.closed) throw new Error('Plex sign-in was closed. Please try again.');
+        // COOP isolation can report an open Plex tab as closed. Only the
+        // backend authorization result (or expiry) determines sign-in status.
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
       if (active.current) throw new Error('Plex sign-in expired. Please try again.');
     } catch (err: any) {
       if (active.current) setMessage({ type: 'error', text: err.response?.data?.error || err.message });
-      popup.close();
+      try { popup.close(); } catch { /* Closing an isolated Plex tab is best-effort. */ }
     } finally { if (active.current) setConnecting(false); }
   };
   const selectServer = async (event: React.FormEvent) => {
