@@ -1,0 +1,9 @@
+# Append this block to the existing Caddyfile.
+# Replace downloads.example.com and NAS_LAN_IP.
+downloads.example.com {
+	reverse_proxy http://NAS_LAN_IP:5070 {
+		# This image does not trust forwarded client IPs; its API rate limit
+		# uses Caddy's address. Avoid Express's unexpected-XFF warning.
+		header_up -X-Forwarded-For
+	}
+}

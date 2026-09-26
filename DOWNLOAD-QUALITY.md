@@ -1,9 +1,15 @@
 # Download quality preview
 
 This branch implements quality selection for movies, episodes and season ZIPs.
-It is an experimental integration awaiting an authenticated end-to-end download
-test. The decision request has been checked on a real Linux Plex server.
+The operator confirmed a successful authenticated download on 26 September 2026
+with TrueNAS 25.10, PMS 1.43.4.10903-e5521bd8c and an Intel Arc A310 assigned to Plex.
+This is an operator-reported result, not an independent codec or GPU measurement.
+The decision request has also been checked on a real Linux Plex test server.
 Original and audio downloads remain available subject to the new download permissions.
+
+For the validated image with automatically created Compose volumes and an
+existing Caddy installation, see `deploy/TRUENAS-CADDY.md`,
+`deploy/truenas-compose.yaml` and `deploy/Caddyfile.librarydownloadarr`.
 
 ## Connection and download permissions
 
@@ -59,7 +65,7 @@ are retried briefly. Expired files have their own message. If Plex reports an er
 without a reason, inspect the Plex Media Server logs for that attempt. A successful
 conversion decision followed by queue failure can still require Plex logs.
 
-The latest NAS attempt passed the decision stage (`general 1001`, `transcode
+An earlier NAS attempt passed the decision stage (`general 1001`, `transcode
 1001`, `Conversion OK`) but the queue still returned `status: error`.
 `directPlay 3000` is expected because this app requests conversion with
 `directPlay=0`; it does not explain why file creation failed. The branch now
@@ -68,6 +74,12 @@ log correlation. Actual transcode refusals still retain their decision details.
 This diagnostic-only change passes 30 backend and seven frontend tests and both
 production builds. It has not been published in a new image; the published image
 remains application commit `85505d0`, so no reinstall is needed to gather logs.
+
+The server logs identified a filesystem permission error while creating a
+subdirectory under Plex's configured download staging path. That path had not
+been mounted into the Plex container. After configuring writable storage for it,
+the operator confirmed that downloads worked. This storage belongs to Plex,
+not LibraryDownloadarr, and is distinct from the live-streaming transcoder cache.
 
 From Plex Web using the server owner's account, select the server in Settings,
 then **Manage → Troubleshooting → Download Logs** and save the ZIP. The logs from
@@ -90,7 +102,7 @@ https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36254437804
 
 This temporary, unclaimed test server returned HTTP 404 for Download Queue.
 It therefore validates the underlying decision request, not an authenticated
-end-to-end download or the NAS's A310. The real-server pilot is still required.
+end-to-end download or the NAS's A310. The later operator pilot is described above.
 The universal playback endpoint also reduced the 2-Mbps test to 720×404 despite
 a 1280×720 maximum, logging a bitrate-driven playback-quality reduction. This
 does not establish Download Queue's final resolution. No speculative bitrate or
@@ -104,7 +116,7 @@ https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36255528410
 A follow-up comparison of direct MP4 and MKV output also failed for both formats
 with the empty output path. No complete file was produced, and this does not
 establish a container-format problem in authenticated Download Queue. The app's
-MP4 request remains unchanged; diagnosing the NAS failure requires its Plex logs.
+MP4 request remains unchanged; the NAS failure was resolved with writable Plex storage.
 https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36256485663
 
 ## Behavior
@@ -193,7 +205,7 @@ For an existing TrueNAS installation, update the image while retaining its
 `/app/data` dataset mapping. The earlier quick test command used `--rm` without a
 data volume: stopping that earlier disposable container deletes its configuration.
 
-## TrueNAS 25.10 pilot
+## TrueNAS 25.10 pilot and deployment
 
 Use `deploy/truenas-quality.yaml` as the Custom App YAML. Before deployment:
 
@@ -211,7 +223,8 @@ settings and observe whether the download conversion uses hardware; successful
 streaming transcoding alone does not prove that this download path uses it.
 No GPU passthrough change to LibraryDownloadarr is required.
 
-Pilot acceptance:
+The operator confirmed successful downloads after the Plex storage correction.
+The following extended acceptance scenarios are not all independently verified:
 
 - Convert a short 4K sample to 720p / 2 Mbps; verify downloaded resolution, duration,
   audio, subtitles and size with a player or ffprobe, and check A310 usage on Plex.
@@ -224,7 +237,7 @@ Pilot acceptance:
 
 Rollback: stop/remove only this preview app; retain its datasets if needed for
 inspection. The pilot does not modify Plex's originals or the existing app.
-An upstream PR should follow a successful pilot, not precede it.
+Following the successful operator pilot, an upstream PR is authorized.
 
 ## Development verification
 

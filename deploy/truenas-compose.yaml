@@ -1,0 +1,35 @@
+# TrueNAS 25.10: Apps > Discover Apps > menu > Install via YAML.
+# Replace NAS_LAN_IP and downloads.example.com. App name: librarydownloadarr.
+# Pins the exact image used for the successful download pilot (85505d0).
+services:
+  librarydownloadarr:
+    image: ghcr.io/hloiseau/librarydownloadarr@sha256:ec8134545fbbf4de96921a58c176bac59a5c4fab4cafaea099c62193cccc35b3
+    restart: unless-stopped
+    ports:
+      - "NAS_LAN_IP:5070:5069"
+    environment:
+      NODE_ENV: production
+      PORT: "5069"
+      DATABASE_PATH: /app/data/librarydownloadarr.db
+      LOG_LEVEL: info
+      TZ: Europe/Paris
+      CORS_ORIGIN: https://downloads.example.com
+    volumes:
+      - app-data:/app/data
+      - app-logs:/app/logs
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    pids_limit: 128
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  app-data:
+  app-logs:

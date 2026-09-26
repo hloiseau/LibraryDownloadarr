@@ -763,7 +763,7 @@ separate authenticated client per job. `routes/downloads.ts` exposes preparation
 polling, cancellation and a session-bound, one-use POST download ticket. Never
 fall back to original media or an admin Plex token for a shared user. Converted
 files stream through the native browser downloader; original paths are unchanged.
-See `DOWNLOAD-QUALITY.md` for lifecycle limits and the required live NAS pilot.
+See `DOWNLOAD-QUALITY.md` for lifecycle limits and the operator-reported NAS pilot.
 Run `cd backend && npm test` and the frontend build before committing.
 PMS profile names resolve to case-sensitive filenames on Linux: send `Generic`,
 not `generic`. Static MP4 decisions on PMS 1.43 may omit `protocol`; reject a
