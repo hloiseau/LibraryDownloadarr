@@ -58,6 +58,9 @@ async function fixture(t, options = {}) {
     if (!queue) return send({}, 404);
     if (queue.owner !== token || queue.client !== req.headers['x-plex-client-identifier']) return send({}, 403);
     if (operation === 'add') {
+      // Linux PMS resolves the supplied name to a case-sensitive profile file.
+      // Unknown names with no platform/device fallback fail before transcoding.
+      queue.invalidProfile = req.headers['x-plex-client-profile-name'] !== 'Generic';
       queue.quality = url.searchParams.get('videoBitrate') === '2000' ? '720p-2' : url.searchParams.get('videoBitrate') === '4000' ? '720p-4' : '1080p-8';
       queue.items = url.searchParams.get('keys').split(',').map(key => ({ key, id: nextItem++, queueId: Number(queueId) }));
       return send({ MediaContainer: { AddedQueueItems: queue.items } });
@@ -67,7 +70,12 @@ async function fixture(t, options = {}) {
       queue.items = queue.items.filter(item => !ids.includes(item.id));
       return send({});
     }
-    if (operation === 'items') return send({ MediaContainer: { DownloadQueueItem: (state.missing ? [] : queue.items).map(item => ({ ...item, status: state.status, DecisionResult: state.decisionError })) } });
+    if (operation === 'items') return send({ MediaContainer: { DownloadQueueItem: (state.missing ? [] : queue.items).map(item => ({ ...item,
+      status: queue.invalidProfile ? 'error' : state.status,
+      DecisionResult: queue.invalidProfile
+        ? { generalDecisionCode: 2004, generalDecisionText: 'Could not construct decision request' }
+        : state.decisionError,
+    })) } });
     if (action === 'decision') {
       const result = decision(queue.quality);
       if (state.wrongDecision) result.MediaContainer.Metadata[0].Media[0].Part[0].Stream[0].height = 2160;
@@ -155,6 +163,25 @@ test('4K fallback and missing output evidence are refused and cleaned up', async
   const original = decision();
   original.MediaContainer.Metadata[0].Media[0].Part[0].decision = 'directplay';
   assert.throws(() => verifyDecision(original.MediaContainer, '720p-2'), /requested MP4 quality/);
+});
+
+test('real PMS static MP4 decision omits protocol; explicit playlists and originals still fail', () => {
+  // Captured from official Linux PMS 1.43.4.10903-e5521bd8c, generated UHD clip.
+  // Probe: https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36254437804
+  // Keep the actual Media/Part/Stream shape rather than inventing Plex fields.
+  const captured = require('./fixtures/pms-1.43-static-decision.json');
+  assert.doesNotThrow(() => verifyDecision(captured.MediaContainer, '720p-2'));
+  for (const change of [
+    part => { part.protocol = 'hls'; },
+    part => { part.container = 'mkv'; },
+    part => { part.decision = 'directplay'; },
+    part => { part.Stream[0].height = 2160; },
+    part => { part.Stream[0].bitrate = 50000; },
+  ]) {
+    const invalid = structuredClone(captured);
+    change(invalid.MediaContainer.Metadata[0].Media[0].Part[0]);
+    assert.throws(() => verifyDecision(invalid.MediaContainer, '720p-2'), /requested MP4 quality/);
+  }
 });
 
 test('permission revocation during conversion is enforced before transfer', async t => {

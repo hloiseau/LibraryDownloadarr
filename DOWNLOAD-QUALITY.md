@@ -58,8 +58,26 @@ are retried briefly. Expired files have their own message. If Plex reports an er
 without a reason, inspect the Plex Media Server logs for that attempt. A successful
 conversion decision followed by queue failure can still require Plex logs.
 
-The new diagnostics are not a confirmed fix for the reported NAS conversion
-failure. The real server's reason is needed before choosing a transcoder change.
+The reported `general 2004: Could not construct decision request` exposed a
+case-sensitive profile-name bug: the app requested `generic`, but Linux PMS ships
+`Generic.xml`. With official PMS 1.43.4.10903-e5521bd8c and a generated UHD clip,
+the former fails with `unable to find a matching profile`; changing it to
+`Generic` produces `Conversion OK`. The app now sends that exact name.
+
+The same live test showed that static MP4 decisions can omit `protocol`. Output
+verification accepts that omission while still rejecting an explicitly different
+protocol, non-MP4 containers, original/direct-play decisions, unsupported video
+codecs and excessive resolution/bitrate. A captured response is included in the
+regression tests. The comparison run is available at:
+https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36254437804
+
+This temporary, unclaimed test server returned HTTP 404 for Download Queue.
+It therefore validates the underlying decision request, not an authenticated
+end-to-end download or the NAS's A310. The real-server pilot is still required.
+The universal playback endpoint also reduced the 2-Mbps test to 720×404 despite
+a 1280×720 maximum, logging a bitrate-driven playback-quality reduction. This
+does not establish Download Queue's final resolution. No speculative bitrate or
+client-capability changes were added to the fix; quality remains a maximum.
 
 ## Behavior
 

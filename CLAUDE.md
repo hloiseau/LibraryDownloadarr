@@ -765,6 +765,11 @@ fall back to original media or an admin Plex token for a shared user. Converted
 files stream through the native browser downloader; original paths are unchanged.
 See `DOWNLOAD-QUALITY.md` for lifecycle limits and the required live NAS pilot.
 Run `cd backend && npm test` and the frontend build before committing.
+PMS profile names resolve to case-sensitive filenames on Linux: send `Generic`,
+not `generic`. Static MP4 decisions on PMS 1.43 may omit `protocol`; reject a
+conflicting explicit protocol while retaining container, codec, size and bitrate
+checks. `backend/test/fixtures/pms-1.43-static-decision.json` contains an actual
+decision captured from a generated UHD clip, without source library metadata.
 
 ## Plex connection and app download permissions
 
