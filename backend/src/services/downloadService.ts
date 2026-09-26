@@ -238,7 +238,7 @@ export class DownloadService {
           `add-transcode-target(type=videoProfile&context=${context}&protocol=http&container=mp4&videoCodec=h264&audioCodec=aac&replace=true)`
         ).join('+'),
         mediaIndex, partIndex, protocol: 'http', directPlay: 0, directStream: 0, directStreamAudio: 0,
-        videoBitrate: profile.bitrate, videoResolution: `${profile.width}x${profile.height}`, videoQuality: 100,
+        videoBitrate: profile.bitrate, videoResolution: `${profile.width}x${profile.height}`,
         audioChannelCount: 2, subtitles: 'burn', advancedSubtitles: 'burn', autoAdjustQuality: 0,
       } });
       const addedItems = added.data.MediaContainer?.AddedQueueItems;

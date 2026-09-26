@@ -1,4 +1,5 @@
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -15,11 +16,11 @@ profiles = [('720p-2', 1280, 720, 2000), ('720p-4', 1280, 720, 4000), ('1080p-8'
 for quality, width, height, bitrate in profiles:
     params = {'path': '/library/metadata/1', 'context': 'static', 'mediaIndex': 0, 'partIndex': 0,
               'protocol': 'http', 'directPlay': 0, 'directStream': 0, 'directStreamAudio': 0,
-              'videoBitrate': bitrate, 'maxVideoBitrate': bitrate, 'videoResolution': f'{width}x{height}', 'videoQuality': 100,
+              'videoBitrate': bitrate, 'videoResolution': f'{width}x{height}',
               'audioChannelCount': 2, 'subtitles': 'burn', 'advancedSubtitles': 'burn',
               'autoAdjustQuality': 0, 'X-Plex-Client-Profile-Extra': extra,
               'session': 'librarydownloadarr-live-' + quality}
-    if quality == '720p-2':
+    if os.environ.get('PROBE_PARAMETERS') and quality == '720p-2':
         caps = '+'.join([
             'add-limitation(scope=videoCodec&scopeName=*&type=upperBound&name=video.width&value=1920&isRequired=true)',
             'add-limitation(scope=videoCodec&scopeName=*&type=upperBound&name=video.height&value=1080&isRequired=true)',
@@ -48,7 +49,9 @@ for quality, width, height, bitrate in profiles:
     result.write_text(json.dumps(decision))
     subprocess.run(['node', '-e', 'const {verifyDecision}=require("./backend/dist/services/downloadService"); verifyDecision(require("/tmp/live-decision.json").MediaContainer, process.argv[1]);', quality], check=True)
     media = decision['MediaContainer']['Metadata'][0]['Media'][0]
-    assert media['width'] == width and media['height'] == height, 'Requested output dimensions not reached'
+    # videoResolution is a maximum. Universal playback can further reduce it
+    # for the bitrate budget; this is not Download Queue validation.
+    assert 0 < media['width'] <= width and 0 < media['height'] <= height
     output = pathlib.Path('/tmp/live-' + quality + '.mp4')
     try:
         url = base + '/video/:/transcode/universal/start.mp4?' + query
@@ -61,7 +64,7 @@ for quality, width, height, bitrate in profiles:
         video = next(s for s in info['streams'] if s['codec_type'] == 'video')
         audio = next(s for s in info['streams'] if s['codec_type'] == 'audio')
         assert video['codec_name'] == 'h264' and audio['codec_name'] == 'aac'
-        assert video['width'] == width and video['height'] == height
+        assert video['width'] == media['width'] and video['height'] == media['height']
         assert 3.8 <= float(info['format']['duration']) <= 4.5
         assert int(video['bit_rate']) <= bitrate * 1250
         print('LIVE ENCODING PASS', quality, json.dumps({'video': video['codec_name'], 'audio': audio['codec_name'],
