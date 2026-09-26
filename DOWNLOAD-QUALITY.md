@@ -31,7 +31,9 @@ before they appear in the permissions page. Administrator sessions, configuratio
 and historical download records are retained; historical duplicate account rows
 are not silently merged. Future logins use the verified Plex account id, so rules
 survive logouts and restarts. Owner authorization flows are bound to the admin
-session; Plex tokens stay on the backend.
+session; Plex tokens stay on the backend. Popup isolation or a closed Plex tab
+does not cancel authorization polling. The app waits for the backend result or
+expiry; an unsuccessful attempt to close a popup cannot discard a valid login.
 
 ## Diagnosing a failed conversion
 
@@ -99,9 +101,10 @@ the error response; go back to the app to retry.
 
 ## Try the updated preview on your computer
 
-Published application commit: `bccfb92`. The Docker build passed all 23 tests;
-anonymous image access was verified. Build:
-https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36250965683
+Published application commit: `ff72532`. Verification covers 23 backend tests
+and six popup regression tests; the latter passed again inside this image build.
+Anonymous image access was verified. Build:
+https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36251526231
 
 To keep an earlier test container intact, launch this version on port 5071 with
 its own persistent data volume:
@@ -115,6 +118,18 @@ Connect with Plex**. Use your NAS's Plex address, not localhost, when selecting 
 server connection. This creates a separate app configuration; it does not migrate
 the previous test or deploy anything on the NAS. Stop it with
 `docker stop -t 45 librarydownloadarr-test-v2`; its named volume keeps the settings.
+
+To update that named test container later while keeping its configuration:
+
+```sh
+docker pull ghcr.io/hloiseau/librarydownloadarr:quality-preview
+docker stop -t 45 librarydownloadarr-test-v2
+docker rm librarydownloadarr-test-v2
+docker run -d --name librarydownloadarr-test-v2 -p 127.0.0.1:5071:5069 -v librarydownloadarr-test-v2:/app/data ghcr.io/hloiseau/librarydownloadarr:quality-preview
+```
+
+The named data volume is retained. Refresh the browser after replacing the
+container. These commands apply to the exact `test-v2` setup above.
 
 For an existing TrueNAS installation, update the image while retaining its
 `/app/data` dataset mapping. The earlier quick test command used `--rm` without a
@@ -161,6 +176,7 @@ npm ci
 npm test
 cd ../frontend
 npm ci
+npm test
 npm run build
 ```
 
@@ -171,7 +187,9 @@ and season ZIP contents. Additional tests cover stable account identity, strict
 server selection, session-bound owner setup, migration, default/user policies,
 original and bulk-route enforcement, and safe diagnostics. These use SQLite,
 Express and simulated Plex responses; they do not validate live Plex OAuth,
-a real PMS transcode or GPU use.
+a real PMS transcode or GPU use. Six frontend page-handler tests simulate
+isolated popup references and backend authorization/denial for both friend login
+and owner setup. They run in the Docker build and do not use a live Plex account.
 
 References:
 - https://developer.plex.tv/pms/ (Download Queue and Profile Augmentations)
