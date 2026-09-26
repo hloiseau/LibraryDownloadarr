@@ -97,6 +97,29 @@ resume after an interrupted transfer is not supported by the single-use POST;
 prepare a new download. If the file request itself fails, the browser displays
 the error response; go back to the app to retry.
 
+## Try the updated preview on your computer
+
+Published application commit: `bccfb92`. The Docker build passed all 23 tests;
+anonymous image access was verified. Build:
+https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36250965683
+
+To keep an earlier test container intact, launch this version on port 5071 with
+its own persistent data volume:
+
+```sh
+docker run --pull always -d --name librarydownloadarr-test-v2 -p 127.0.0.1:5071:5069 -v librarydownloadarr-test-v2:/app/data ghcr.io/hloiseau/librarydownloadarr:quality-preview
+```
+
+Open http://localhost:5071, create the local administrator and choose **Settings →
+Connect with Plex**. Use your NAS's Plex address, not localhost, when selecting the
+server connection. This creates a separate app configuration; it does not migrate
+the previous test or deploy anything on the NAS. Stop it with
+`docker stop -t 45 librarydownloadarr-test-v2`; its named volume keeps the settings.
+
+For an existing TrueNAS installation, update the image while retaining its
+`/app/data` dataset mapping. The earlier quick test command used `--rm` without a
+data volume: stopping that earlier disposable container deletes its configuration.
+
 ## TrueNAS 25.10 pilot
 
 Use `deploy/truenas-quality.yaml` as the Custom App YAML. Before deployment:
