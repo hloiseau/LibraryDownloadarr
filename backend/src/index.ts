@@ -11,6 +11,7 @@ import { createLibrariesRouter } from './routes/libraries';
 import { createMediaRouter } from './routes/media';
 import { createSettingsRouter } from './routes/settings';
 import { createLogsRouter } from './routes/logs';
+import { createDownloadsRouter } from './routes/downloads';
 
 // Initialize database
 const db = new DatabaseService(config.database.path);
@@ -51,6 +52,8 @@ app.use('/api/libraries', createLibrariesRouter(db));
 app.use('/api/media', createMediaRouter(db));
 app.use('/api/settings', createSettingsRouter(db));
 app.use('/api/logs', createLogsRouter(db));
+const downloads = createDownloadsRouter(db);
+app.use('/api/downloads', downloads.router);
 
 // Serve static files (frontend)
 const publicPath = path.join(__dirname, '..', 'public');
@@ -75,20 +78,20 @@ const server = app.listen(config.server.port, () => {
 // Graceful shutdown
 process.on('SIGTERM', () => {
   logger.info('SIGTERM signal received: closing HTTP server');
-  server.close(() => {
+  void downloads.close().finally(() => server.close(() => {
     logger.info('HTTP server closed');
     db.close();
     process.exit(0);
-  });
+  }));
 });
 
 process.on('SIGINT', () => {
   logger.info('SIGINT signal received: closing HTTP server');
-  server.close(() => {
+  void downloads.close().finally(() => server.close(() => {
     logger.info('HTTP server closed');
     db.close();
     process.exit(0);
-  });
+  }));
 });
 
 export { app, db };

@@ -1,3 +1,4 @@
+import { DownloadQuality, PreparedDownload } from '../types';
 import axios, { AxiosInstance } from 'axios';
 import {
   User,
@@ -155,6 +156,22 @@ class ApiClient {
   async getDownloadStats(): Promise<any> {
     const response = await this.client.get<{ stats: any }>('/media/download-stats');
     return response.data.stats;
+  }
+
+  async prepareDownload(input: { ratingKey: string; partKey?: string; season?: boolean; quality: Exclude<DownloadQuality, 'original'> }): Promise<PreparedDownload> {
+    return (await this.client.post('/downloads', input)).data;
+  }
+
+  async getPreparedDownload(id: string): Promise<PreparedDownload> {
+    return (await this.client.get(`/downloads/${id}`)).data;
+  }
+
+  async cancelPreparedDownload(id: string): Promise<void> {
+    await this.client.delete(`/downloads/${id}`);
+  }
+
+  async getDownloadTicket(id: string): Promise<string> {
+    return (await this.client.post(`/downloads/${id}/ticket`)).data.ticket;
   }
 
   getDownloadUrl(ratingKey: string, partKey: string): string {

@@ -9,6 +9,7 @@ on:
       - 'v*.*.*'
     branches:
       - main
+      - "codex/download-quality-*"
 
 env:
   REGISTRY: ghcr.io
@@ -24,6 +25,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -43,6 +47,7 @@ jobs:
           tags: |
             # Set latest tag for main branch
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=quality-preview,enable=${{ startsWith(github.ref, 'refs/heads/codex/download-quality-') }}
             # Tag with version for releases (v1.2.3 -> 1.2.3)
             type=semver,pattern={{version}}
             # Tag with major.minor (v1.2.3 -> 1.2)
@@ -63,7 +68,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ startsWith(github.ref, 'refs/heads/codex/download-quality-') && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
 
       - name: Output image tags
         run: |

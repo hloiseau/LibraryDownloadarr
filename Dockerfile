@@ -10,8 +10,8 @@ RUN npm ci
 # Copy backend source
 COPY backend/ ./
 
-# Build backend
-RUN npm run build
+# Compile and verify the download workflow before publishing
+RUN npm test
 
 # Frontend builder stage
 FROM node:20-alpine AS frontend-builder

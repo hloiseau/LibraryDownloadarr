@@ -754,3 +754,14 @@ CREATE TABLE download_history (
 **Last Updated**: 2025-11-07 (Session: claude/add-download-progress-bar-011CUsC4Kdw1m1yxqpX5x1oG)
 
 **Maintenance Note**: When making significant architectural changes, please update this document to help future agents understand the codebase.
+
+
+## Download Quality Preview
+
+`backend/src/services/downloadService.ts` uses Plex Download Queue API with a
+separate authenticated client per job. `routes/downloads.ts` exposes preparation,
+polling, cancellation and a session-bound, one-use POST download ticket. Never
+fall back to original media or an admin Plex token for a shared user. Converted
+files stream through the native browser downloader; original paths are unchanged.
+See `DOWNLOAD-QUALITY.md` for lifecycle limits and the required live NAS pilot.
+Run `cd backend && npm test` and the frontend build before committing.

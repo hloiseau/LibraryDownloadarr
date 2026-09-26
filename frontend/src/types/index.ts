@@ -75,3 +75,14 @@ export interface Settings {
   plexMachineId?: string;
   plexServerName?: string;
 }
+
+export type DownloadQuality = 'original' | '720p-2' | '720p-4' | '1080p-8';
+export interface PreparedDownload {
+  id: string;
+  filename: string;
+  quality: Exclude<DownloadQuality, 'original'>;
+  state: 'preparing' | 'ready' | 'sending' | 'error';
+  readyCount: number;
+  fileCount: number;
+  error?: string;
+}
