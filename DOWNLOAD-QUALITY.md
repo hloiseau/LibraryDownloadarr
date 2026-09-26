@@ -71,9 +71,8 @@ An earlier NAS attempt passed the decision stage (`general 1001`, `transcode
 `directPlay=0`; it does not explain why file creation failed. The branch now
 clarifies this case and includes the UTC observation time and queue/item ids for
 log correlation. Actual transcode refusals still retain their decision details.
-This diagnostic-only change passes 30 backend and seven frontend tests and both
-production builds. It has not been published in a new image; the published image
-remains application commit `85505d0`, so no reinstall is needed to gather logs.
+This diagnostic clarification is included in the progress image `c13399c`.
+It does not alter the conversion parameters used by the successful `85505d0` pilot.
 
 The server logs identified a filesystem permission error while creating a
 subdirectory under Plex's configured download staging path. That path had not
@@ -181,11 +180,10 @@ the error response; go back to the app to retry.
 
 ## Try the updated preview on your computer
 
-Published application commit: `85505d0`. All 28 backend tests and seven frontend
-tests pass; both production builds pass. The Docker build reran the backend
-tests and reused the unchanged, previously tested frontend layer. Anonymous
-image access was verified. Build:
-https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36255594669
+Published application commit: `c13399c`. All 34 backend tests and 11 frontend
+tests pass; both production builds pass. The Docker build reran both test suites.
+Anonymous image access and the embedded commit revision were verified. Build:
+https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36268906131
 
 To keep an earlier test container intact, launch this version on port 5071 with
 its own persistent data volume:

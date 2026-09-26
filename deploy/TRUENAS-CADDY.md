@@ -1,8 +1,15 @@
 # Installation TrueNAS 25.10 et Caddy
 
-Le Compose `truenas-compose.yaml` utilise l'image du fork dont le téléchargement
-transcodé a été confirmé fonctionnel le 26 septembre 2026. Son digest est épinglé :
-une nouvelle publication de `quality-preview` ne la remplacera pas implicitement.
+Le Compose `truenas-compose.yaml` utilise l'image `c13399c` avec les barres de
+progression de conversion, validée par 45 tests automatisés et le build Docker.
+Elle prolonge la version dont le téléchargement a été confirmé fonctionnel le
+26 septembre 2026. L'affichage de progression sur le NAS reste à confirmer.
+Son digest est épinglé : une nouvelle publication de `quality-preview` ne la
+remplacera pas implicitement.
+
+Pour mettre à jour l'application déjà installée, remplacer uniquement sa ligne
+`image:` par celle du Compose, puis enregistrer et rafraîchir le navigateur.
+Conserver le nom de l'application, ses volumes, son IP et son domaine.
 
 ## TrueNAS
 

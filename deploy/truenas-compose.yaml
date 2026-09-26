@@ -1,9 +1,9 @@
 # TrueNAS 25.10: Apps > Discover Apps > menu > Install via YAML.
 # Replace NAS_LAN_IP and downloads.example.com. App name: librarydownloadarr.
-# Pins the exact image used for the successful download pilot (85505d0).
+# Progress image c13399c; 45 tests pass. Builds on the successful 85505d0 pilot.
 services:
   librarydownloadarr:
-    image: ghcr.io/hloiseau/librarydownloadarr@sha256:ec8134545fbbf4de96921a58c176bac59a5c4fab4cafaea099c62193cccc35b3
+    image: ghcr.io/hloiseau/librarydownloadarr@sha256:2ce1026be6c86110a48e918175abe76df4ab4b0bd81628a144a0361858361992
     restart: unless-stopped
     ports:
       - "NAS_LAN_IP:5070:5069"
