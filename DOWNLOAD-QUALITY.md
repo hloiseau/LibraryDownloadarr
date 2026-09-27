@@ -59,7 +59,9 @@ after changing servers the administrator must save policies for the new server.
 
 ## Download lifecycle and limits
 
-Choose a quality, wait for preparation, then click **Save file**. You can close
+Click **Download** or **Season** to open the download options. Quality, audio and
+subtitles are selected only in this dialog; the last confirmed quality is
+remembered for the next download. Wait for preparation, then click **Save file**. You can close
 the page during preparation and return to **Downloads**. Converted media is streamed without accumulating the
 whole file in a browser Blob. Browser download tickets are single-use, expire
 after 60 seconds, and are sent in a POST body. Plex and session tokens do not
