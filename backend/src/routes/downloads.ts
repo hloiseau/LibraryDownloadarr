@@ -1,5 +1,7 @@
 import { Router, Response } from 'express';
 import { randomBytes } from 'crypto';
+import axios from 'axios';
+import { Transform } from 'stream';
 import archiver from 'archiver';
 import { pipeline, finished } from 'stream/promises';
 import { DatabaseService } from '../models/database';
@@ -60,6 +62,7 @@ export function createDownloadsRouter(db: DatabaseService, service = new Downloa
     const grant = tickets.get(ticket);
     tickets.delete(ticket);
     if (!grant || grant.expires <= Date.now() || grant.jobId !== req.params.id) {
+      logger.warn('Converted download rejected: invalid or expired ticket');
       res.status(403).json({ error: 'Download link expired. Return to LibraryDownloadarr and click Save file again.' });
       return;
     }
@@ -70,6 +73,18 @@ export function createDownloadsRouter(db: DatabaseService, service = new Downloa
       next();
     });
   }, async (req: AuthRequest, res) => {
+    const beganAt = Date.now();
+    const diagnostic = {
+      jobId: req.params.id, stage: 'permission-check', bytesSent: 0,
+      expectedBytes: undefined as number | undefined,
+    };
+    // Count bytes passed to the HTTP response, not bytes saved on the device.
+    // Keep diagnostic fields in the message: console logging omits metadata.
+    const meter = new Transform({ transform(chunk, _encoding, callback) {
+      diagnostic.bytesSent += chunk.length;
+      callback(null, chunk);
+    } });
+    logger.info(`Converted download started ${JSON.stringify({ jobId: diagnostic.jobId })}`);
     let started = false;
     let cleaned = false;
     const cleanup = async () => {
@@ -83,18 +98,20 @@ export function createDownloadsRouter(db: DatabaseService, service = new Downloa
       started = true;
       if (res.destroyed) { await cleanup(); return; }
       // Open before attachment headers: an upstream refusal must not look like a file.
+      diagnostic.stage = 'open-plex-file';
       const first = await transfer.open(transfer.files[0]);
       res.attachment(transfer.filename);
       let totalSize: number | undefined = first.size;
       if (transfer.filename.endsWith('.zip')) {
         res.type('application/zip');
         const archive = archiver('zip', { store: true, forceZip64: true });
-        const output = pipeline(archive, res);
+        const output = pipeline(archive, meter, res);
         void output.catch(() => { archive.abort(); void cleanup(); });
         try {
           for (let index = 0; index < transfer.files.length; index++) {
             const file = transfer.files[index];
             const source = index === 0 ? first : await transfer.open(file);
+            diagnostic.stage = 'stream-zip';
             if (index > 0) totalSize = (totalSize ?? 0) + (source.size ?? 0);
             const done = finished(source.stream);
             archive.append(source.stream, { name: file.filename });
@@ -109,13 +126,28 @@ export function createDownloadsRouter(db: DatabaseService, service = new Downloa
           throw error;
         }
       } else {
+        diagnostic.stage = 'stream-mp4';
+        diagnostic.expectedBytes = first.size;
         res.type('video/mp4');
         if (first.size) res.setHeader('Content-Length', String(first.size));
-        await pipeline(first.stream, res);
+        await pipeline(first.stream, meter, res);
       }
       db.logDownload(req.user!.id, `${transfer.title} [converted]`, transfer.ratingKey, totalSize);
-      logger.info('Converted download transferred', { userId: req.user!.id, ratingKey: transfer.ratingKey });
-    } catch (error) { failure(res, error); }
+      logger.info(`Converted download transferred ${JSON.stringify({ ...diagnostic, elapsedMs: Date.now() - beganAt })}`);
+    } catch (error) {
+      // Never serialize the exception: Axios includes Plex credentials, URLs
+      // and response bodies. Only numeric statuses and bounded codes are safe.
+      const code = (error as { code?: unknown })?.code;
+      logger.warn(`Converted download failed ${JSON.stringify({
+        ...diagnostic, elapsedMs: Date.now() - beganAt,
+        responseStarted: res.headersSent,
+        responseFinished: res.writableFinished,
+        upstreamStatus: axios.isAxiosError(error) ? error.response?.status : undefined,
+        status: downloadFailure(error).status,
+        code: typeof code === 'string' && /^[A-Z0-9_]{1,48}$/.test(code) ? code : undefined,
+      })}`);
+      failure(res, error);
+    }
     finally { await cleanup(); }
   });
   return { router, close: () => service.close() };

@@ -810,3 +810,10 @@ fall back to another connection. `plexConnection.ts` handles identity/library
 checks and safe error classification. Retain failed flows for address retries.
 Custom URLs must identify the expected server before a token is sent; only exact
 advertised connections may retry a denied identity request with authentication.
+
+Native file downloads must bypass the service worker by returning from the fetch
+handler without calling respondWith. A network-only respondWith(fetch(request))
+still intercepts the attachment navigation. Keep all APIs and non-GET requests
+out of both worker interception and caching. Bump the worker cache version when
+changing this behavior. Transfer logs use only job id, fixed stages, numeric
+statuses, byte counts and bounded error codes; never serialize Axios errors.

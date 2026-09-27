@@ -148,3 +148,29 @@ References:
 - https://developer.plex.tv/pms/
 - https://support.plex.tv/articles/transcoder/
 - https://support.plex.tv/articles/200250417-plex-media-server-log-files/
+
+## Native download transfer
+
+API requests and native file POSTs bypass service-worker interception entirely.
+A network-only `respondWith(fetch(request))` still intercepts attachment
+navigations; return without calling it. The worker keeps normal shell caching
+and bumps its cache version for activation.
+
+Container console logs report transfer start, completion, and failure with job
+id, stage, safe HTTP/error codes, elapsed time and bytes passed to the response.
+These counts do not prove that the browser saved the file. No Plex tokens, URLs,
+media titles or raw Axios errors are logged. A refused file request and a stream
+cut short are covered by backend tests; neither records a successful download.
+
+Validation: 36 backend tests, 14 frontend tests and both builds pass. A separate
+32 MiB transfer through actual Caddy/router/service with mock Plex and a shared
+user survived a 35-second client pause and passed SHA-256 verification. This is
+a controlled proxy test, not a test of an Internet connection or a real user's
+Plex permissions.
+
+A real Chrome probe also completed a 4 MiB native POST download with the old
+worker and with the bypass, both under service-worker control. Thus the reported
+remote failure was not reproduced and is not attributed to the worker. The
+bypass removes unnecessary interception; diagnostics are needed from the failing
+installation to identify its cause. Probe:
+https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36307251370

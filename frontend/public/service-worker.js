@@ -1,4 +1,4 @@
-const CACHE_NAME = 'librarydownloadarr-v3';
+const CACHE_NAME = 'librarydownloadarr-v4';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -32,18 +32,19 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   // Skip caching for download endpoints (they're too large and shouldn't be cached)
   const url = new URL(event.request.url);
+  // Leave API requests and native attachment navigations to the browser.
+  // respondWith(fetch(...)) still intercepts them, even without caching.
+  // Keep the file stream outside the worker and in the native downloader.
   // Account-specific metadata and permission responses must never be cached.
   if (url.pathname.startsWith('/api/') || event.request.method !== 'GET') {
-    event.respondWith(fetch(event.request));
     return;
   }
   const isDownloadRequest = url.pathname.includes('/download') ||
                            url.pathname.includes('/season/') ||
                            url.pathname.includes('/album/');
 
-  // For download requests, just fetch without caching
+  // Downloads outside /api also bypass the worker entirely.
   if (isDownloadRequest) {
-    event.respondWith(fetch(event.request));
     return;
   }
 
