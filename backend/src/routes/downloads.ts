@@ -85,18 +85,12 @@ export function createDownloadsRouter(db: DatabaseService, service = new Downloa
       callback(null, chunk);
     } });
     logger.info(`Converted download started ${JSON.stringify({ jobId: diagnostic.jobId })}`);
-    let started = false;
-    let cleaned = false;
-    const cleanup = async () => {
-      if (cleaned || !started) return;
-      cleaned = true;
-      try { await service.cancel(req.params.id, req.user!.id); } catch { /* Already removed/expired. */ }
-    };
-    res.once('close', () => { void cleanup(); });
+    let transfer: Awaited<ReturnType<DownloadService['beginTransfer']>> | undefined;
+    // A disconnected browser cancels this stream, not the reusable Plex file.
+    res.once('close', () => { transfer?.abort(); });
     try {
-      const transfer = await service.beginTransfer(req.params.id, req.user!.id, credentials(req));
-      started = true;
-      if (res.destroyed) { await cleanup(); return; }
+      transfer = await service.beginTransfer(req.params.id, req.user!.id, credentials(req));
+      if (res.destroyed) { transfer.abort(); return; }
       // Open before attachment headers: an upstream refusal must not look like a file.
       diagnostic.stage = 'open-plex-file';
       const first = await transfer.open(transfer.files[0]);
@@ -106,7 +100,7 @@ export function createDownloadsRouter(db: DatabaseService, service = new Downloa
         res.type('application/zip');
         const archive = archiver('zip', { store: true, forceZip64: true });
         const output = pipeline(archive, meter, res);
-        void output.catch(() => { archive.abort(); void cleanup(); });
+        void output.catch(() => { archive.abort(); transfer?.abort(); });
         try {
           for (let index = 0; index < transfer.files.length; index++) {
             const file = transfer.files[index];
@@ -148,7 +142,7 @@ export function createDownloadsRouter(db: DatabaseService, service = new Downloa
       })}`);
       failure(res, error);
     }
-    finally { await cleanup(); }
+    finally { await transfer?.finish(); }
   });
   return { router, close: () => service.close() };
 }

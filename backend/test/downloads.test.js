@@ -46,6 +46,11 @@ async function fixture(t, options = {}) {
       if (id === '999') return send({}, 403);
       const items = url.pathname.endsWith('/children') ? [media('2'), media('3')] : [media(id)];
       items.forEach(item => { if (state.durations?.[item.ratingKey] !== undefined) item.duration = state.durations[item.ratingKey]; });
+      if (state.sourceSize) items.forEach(item => { item.Media[0].Part[0].size = state.sourceSize; });
+      if (state.audioSelection) items.forEach(item => { item.Media[0].Part[0].Stream = [
+        { id: 'audio-en', streamType: 2, selected: state.audioSelection === 'en' },
+        { id: 'audio-fr', streamType: 2, selected: state.audioSelection === 'fr' },
+      ]; });
       if (state.allowSyncFalse) items.forEach(item => { item.allowSync = false; });
       return send({ MediaContainer: { Metadata: items, totalSize: items.length } });
     }
@@ -95,7 +100,7 @@ async function fixture(t, options = {}) {
     send({}, 404);
   });
   const serverUrl = await listen(plex);
-  const service = new DownloadService(options.ttlMs || 100000);
+  const service = new DownloadService(options.ttlMs || 100000, options.cacheTtlMs || 100000);
   const credentials = { serverUrl, token: 'shared-token' };
   t.after(async () => { await service.close(); await new Promise(resolve => plex.close(resolve)); });
   return { requests, queues, state, service, credentials };
@@ -278,8 +283,8 @@ test('permission revocation during conversion is enforced before transfer', asyn
 
 test('queue failures, cancellation, and per-user limits are handled', async t => {
   const f = await fixture(t);
-  const jobs = await Promise.all([f.service.create('alice', f.credentials, request), f.service.create('alice', f.credentials, request)]);
-  await assert.rejects(f.service.create('alice', f.credentials, request), { status: 429 });
+  const jobs = await Promise.all([f.service.create('alice', f.credentials, request), f.service.create('alice', f.credentials, { ...request, quality: '1080p-8' })]);
+  await assert.rejects(f.service.create('alice', f.credentials, { ...request, quality: '720p-4' }), { status: 429 });
   assert.notEqual(f.requests.filter(r => r.path === '/downloadQueue')[0].client, f.requests.filter(r => r.path === '/downloadQueue')[1].client);
   await f.service.cancel(jobs[0].id, 'alice');
   assert.ok([...f.queues.values()].some(queue => queue.items.length === 1));
@@ -295,6 +300,8 @@ test('MP4-only and maximum output size checks prevent wrong downloads', async t 
   await assert.rejects(transfer.open(transfer.files[0]), /larger/);
   f.state.huge = false; f.state.playlist = true;
   await assert.rejects(transfer.open(transfer.files[0]), /file type/);
+  await transfer.finish();
+  await assert.rejects(f.service.status(job.id, 'alice', f.credentials), { status: 404 });
 });
 
 async function application(t, f) {
@@ -337,7 +344,7 @@ test('transfer diagnostics identify shared-user Plex refusal without credentials
   assert.equal(app.logs.length, 0);
 });
 
-test('a Plex stream cut short is logged with byte counts and cleaned up', async t => {
+test('a Plex stream cut short is logged and can be retried without conversion', async t => {
   const warnings = [];
   t.mock.method(logger, 'warn', message => warnings.push(message));
   const f = await fixture(t, { status: 'available', streamMedia: (_req, res) => {
@@ -359,7 +366,14 @@ test('a Plex stream cut short is logged with byte counts and cleaned up', async 
   assert.equal(details.responseFinished, false);
   assert.equal(app.logs.length, 0);
   await new Promise(resolve => setTimeout(resolve, 40));
-  assert.ok([...f.queues.values()].every(queue => !queue.items.length));
+  assert.ok([...f.queues.values()].every(queue => queue.items.length === 1));
+  assert.equal((await (await app.call(`/${job.id}`)).json()).state, 'ready');
+  f.state.streamMedia = undefined;
+  const retryTicket = await (await app.call(`/${job.id}/ticket`, { method: 'POST' })).json();
+  const retry = await app.call(`/${job.id}/file`, { method: 'POST', body: JSON.stringify(retryTicket) });
+  assert.deepEqual(Buffer.from(await retry.arrayBuffer()), mp4);
+  assert.equal(f.requests.filter(r => r.path.endsWith('/add')).length, 1);
+  assert.equal(app.logs.length, 1);
 });
 
 test('native ticket streams a file, is single-use and respects session revocation', async t => {
@@ -489,4 +503,191 @@ test('restricted season checks every episode library before queue creation', asy
   const credentials = { ...f.credentials, authorize: (quality, item, container) => assertDownloadPolicy(db, { id: 'alice', isAdmin: false }, quality, item, container) };
   await assert.rejects(f.service.create('alice', credentials, { ratingKey: '100', quality: '720p-2', season: true }), { status: 403 });
   assert.ok(!f.requests.some(r => r.path === '/downloadQueue'));
+});
+
+test('completed files can be saved twice and reselected after reload without a second conversion', async t => {
+  const f = await fixture(t, { status: 'available' });
+  const app = await application(t, f);
+  const job = await (await app.call('', { method: 'POST', body: JSON.stringify(request) })).json();
+  let expiresAt;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { ticket } = await (await app.call(`/${job.id}/ticket`, { method: 'POST' })).json();
+    const response = await app.call(`/${job.id}/file`, { method: 'POST', body: JSON.stringify({ ticket }) });
+    assert.equal(response.status, 200);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), mp4);
+    const ready = await (await app.call(`/${job.id}`)).json();
+    assert.equal(ready.state, 'ready');
+    if (expiresAt) assert.equal(ready.expiresAt, expiresAt, 'retry must not extend retention indefinitely');
+    expiresAt = ready.expiresAt;
+  }
+  const reused = await (await app.call('', { method: 'POST', body: JSON.stringify(request) })).json();
+  assert.equal(reused.id, job.id);
+  assert.equal(reused.reused, true);
+  assert.equal(reused.state, 'ready');
+  assert.equal(f.requests.filter(r => r.path.endsWith('/add')).length, 1);
+  assert.equal(app.logs.length, 2);
+  assert.ok(f.requests.every(r => r.token === 'shared-token'));
+});
+
+test('reuse is isolated by user and quality and rechecks access and changed source files', async t => {
+  const f = await fixture(t, { status: 'available' });
+  const job = await f.service.create('alice', f.credentials, request);
+  await f.service.status(job.id, 'alice', f.credentials);
+  assert.equal((await f.service.create('alice', f.credentials, request)).id, job.id);
+  const otherUser = await f.service.create('bob', { ...f.credentials, token: 'other-token' }, request);
+  assert.notEqual(otherUser.id, job.id);
+  const otherQuality = await f.service.create('alice', f.credentials, { ...request, quality: '1080p-8' });
+  assert.notEqual(otherQuality.id, job.id);
+  f.state.allowSyncFalse = true;
+  await assert.rejects(f.service.create('alice', f.credentials, request), { status: 403 });
+  f.state.allowSyncFalse = false;
+  f.state.sourceSize = 123456;
+  const replacement = await f.service.create('alice', f.credentials, request);
+  assert.notEqual(replacement.id, job.id);
+  await assert.rejects(f.service.status(job.id, 'alice', f.credentials), { status: 404 });
+});
+
+test('simultaneous matching requests share a single Plex conversion', async t => {
+  const f = await fixture(t);
+  const jobs = await Promise.all(Array.from({ length: 8 }, () => f.service.create('alice', f.credentials, request)));
+  assert.equal(new Set(jobs.map(j => j.id)).size, 1);
+  assert.equal(f.requests.filter(r => r.path.endsWith('/add')).length, 1);
+});
+
+test('idle cache entries yield to new jobs without evicting a live transfer', async t => {
+  const f = await fixture(t, { status: 'available' });
+  const active = await f.service.create('alice', f.credentials, request);
+  await f.service.status(active.id, 'alice', f.credentials);
+  const transfer = await f.service.beginTransfer(active.id, 'alice', f.credentials);
+  const idle = await f.service.create('alice', f.credentials, { ...request, quality: '1080p-8' });
+  await f.service.status(idle.id, 'alice', f.credentials);
+  const fresh = await f.service.create('alice', f.credentials, { ...request, quality: '720p-4' });
+  assert.notEqual(fresh.id, idle.id);
+  await assert.rejects(f.service.status(idle.id, 'alice', f.credentials), { status: 404 });
+  assert.equal((await f.service.status(active.id, 'alice', f.credentials)).state, 'sending');
+  const source = await transfer.open(transfer.files[0]);
+  const chunks = [];
+  for await (const chunk of source.stream) chunks.push(chunk);
+  assert.deepEqual(Buffer.concat(chunks), mp4);
+  await transfer.finish();
+});
+
+test('cache expiry triggers fresh conversion but never interrupts an already running transfer', async t => {
+  const f = await fixture(t, { status: 'available', cacheTtlMs: 60000 });
+  const job = await f.service.create('alice', f.credentials, request);
+  const ready = await f.service.status(job.id, 'alice', f.credentials);
+  const transfer = await f.service.beginTransfer(job.id, 'alice', f.credentials);
+  const clock = t.mock.method(Date, 'now', () => ready.expiresAt + 1);
+  assert.equal((await f.service.status(job.id, 'alice', f.credentials)).state, 'sending');
+  const source = await transfer.open(transfer.files[0]);
+  for await (const chunk of source.stream) assert.ok(chunk.length);
+  await transfer.finish();
+  await assert.rejects(f.service.status(job.id, 'alice', f.credentials), { status: 404 });
+  clock.mock.restore();
+  const next = await f.service.create('alice', f.credentials, request);
+  assert.notEqual(next.id, job.id);
+  assert.equal(f.requests.filter(r => r.path.endsWith('/add')).length, 2);
+});
+
+test('Plex-evicted files are prepared again only when reselected', async t => {
+  const f = await fixture(t, { status: 'available' });
+  const job = await f.service.create('alice', f.credentials, request);
+  await f.service.status(job.id, 'alice', f.credentials);
+  for (const q of f.queues.values()) q.items = [];
+  const fresh = await f.service.create('alice', f.credentials, request);
+  assert.notEqual(fresh.id, job.id);
+  assert.equal(f.requests.filter(r => r.path.endsWith('/add')).length, 2);
+});
+
+test('old finalizers and simultaneous file requests cannot release a newer transfer', async t => {
+  const f = await fixture(t, { status: 'available' });
+  const job = await f.service.create('alice', f.credentials, request);
+  await f.service.status(job.id, 'alice', f.credentials);
+  const first = await f.service.beginTransfer(job.id, 'alice', f.credentials);
+  await assert.rejects(f.service.beginTransfer(job.id, 'alice', f.credentials), { status: 409 });
+  await first.finish();
+  const second = await f.service.beginTransfer(job.id, 'alice', f.credentials);
+  await first.finish();
+  assert.equal((await f.service.status(job.id, 'alice', f.credentials)).state, 'sending');
+  const source = await second.open(second.files[0]);
+  for await (const chunk of source.stream) assert.ok(chunk.length);
+  await second.finish();
+  assert.equal((await f.service.status(job.id, 'alice', f.credentials)).state, 'ready');
+});
+
+test('cached conversions still obey changed per-user policies before reuse and bytes', async t => {
+  const f = await fixture(t, { status: 'available' });
+  const app = await application(t, f);
+  const job = await (await app.call('', { method: 'POST', body: JSON.stringify(request) })).json();
+  const { ticket } = await (await app.call(`/${job.id}/ticket`, { method: 'POST' })).json();
+  const file = await app.call(`/${job.id}/file`, { method: 'POST', body: JSON.stringify({ ticket }) });
+  await file.arrayBuffer();
+  app.settings['download_policy:alice'] = JSON.stringify({ enabled: false, libraries: null, qualities: ['720p-2'], serverId: 'server-1' });
+  assert.equal((await app.call('', { method: 'POST', body: JSON.stringify(request) })).status, 403);
+  const retryTicket = await (await app.call(`/${job.id}/ticket`, { method: 'POST' })).json();
+  const denied = await app.call(`/${job.id}/file`, { method: 'POST', body: JSON.stringify(retryTicket) });
+  assert.equal(denied.status, 403);
+  assert.equal(f.requests.filter(r => r.path.endsWith('/media')).length, 1);
+  assert.equal(app.logs.length, 1);
+});
+
+test('browser disconnect releases the stream but retains the conversion for a fresh ticket', async t => {
+  const f = await fixture(t, { status: 'available', streamMedia: (_req, res) => {
+    const chunk = Buffer.alloc(65536, 1);
+    res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': chunk.length * 32 });
+    res.write(chunk);
+    let count = 1;
+    const timer = setInterval(() => { if (++count === 32) { clearInterval(timer); res.end(chunk); } else res.write(chunk); }, 20);
+    res.once('close', () => clearInterval(timer));
+  } });
+  const app = await application(t, f);
+  const job = await (await app.call('', { method: 'POST', body: JSON.stringify(request) })).json();
+  const { ticket } = await (await app.call(`/${job.id}/ticket`, { method: 'POST' })).json();
+  const response = await app.call(`/${job.id}/file`, { method: 'POST', body: JSON.stringify({ ticket }) });
+  const reader = response.body.getReader();
+  assert.ok((await reader.read()).value.length > 0);
+  await reader.cancel();
+  let ready;
+  for (let i = 0; i < 50; i++) {
+    ready = await (await app.call(`/${job.id}`)).json();
+    if (ready.state === 'ready') break;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.equal(ready.state, 'ready');
+  assert.equal(app.logs.length, 0);
+  f.state.streamMedia = undefined;
+  const retryTicket = await (await app.call(`/${job.id}/ticket`, { method: 'POST' })).json();
+  const retry = await app.call(`/${job.id}/file`, { method: 'POST', body: JSON.stringify(retryTicket) });
+  assert.deepEqual(Buffer.from(await retry.arrayBuffer()), mp4);
+  assert.equal(f.requests.filter(r => r.path.endsWith('/add')).length, 1);
+  assert.equal(f.requests.filter(r => r.method === 'DELETE').length, 0);
+});
+
+test('season retries rebuild the ZIP from retained conversions without retranscoding episodes', async t => {
+  const f = await fixture(t, { status: 'available' });
+  const app = await application(t, f);
+  const input = { ratingKey: '100', season: true, quality: '720p-2' };
+  const job = await (await app.call('', { method: 'POST', body: JSON.stringify(input) })).json();
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const grant = await (await app.call(`/${job.id}/ticket`, { method: 'POST' })).json();
+    const response = await app.call(`/${job.id}/file`, { method: 'POST', body: JSON.stringify(grant) });
+    assert.equal(response.status, 200);
+    const zip = Buffer.from(await response.arrayBuffer());
+    assert.equal(zip.toString().split('MOCK-CONVERTED-MEDIA').length - 1, 2);
+  }
+  const reused = await (await app.call('', { method: 'POST', body: JSON.stringify(input) })).json();
+  assert.equal(reused.id, job.id);
+  assert.equal(reused.reused, true);
+  assert.equal(f.requests.filter(r => r.path.endsWith('/add')).length, 1);
+  assert.equal(f.requests.filter(r => r.path.endsWith('/media')).length, 4);
+});
+
+test('changing the selected Plex audio stream invalidates a retained conversion', async t => {
+  const f = await fixture(t, { status: 'available', audioSelection: 'en' });
+  const job = await f.service.create('alice', f.credentials, request);
+  await f.service.status(job.id, 'alice', f.credentials);
+  f.state.audioSelection = 'fr';
+  const fresh = await f.service.create('alice', f.credentials, request);
+  assert.notEqual(fresh.id, job.id);
+  assert.equal(f.requests.filter(r => r.path.endsWith('/add')).length, 2);
 });

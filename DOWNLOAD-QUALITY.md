@@ -127,8 +127,8 @@ session access or administrator token is needed. For seasons, progress is
 weighted by episode duration when all durations are available, otherwise by file
 count. Missing percentages use an indeterminate animation instead of invented
 progress. Only verified ready files reach 100%; transfer after Save file is
-tracked by the browser's download manager. Regression coverage includes 36 backend
-tests and 14 frontend tests; the progress UI is not yet independently tested on
+tracked by the browser's download manager. Regression coverage includes 47 backend
+tests and 17 frontend tests; the progress UI is not yet independently tested on
 the live NAS.
 
 Select Original, 720p / 2 Mbps, 720p / 4 Mbps or 1080p / 8 Mbps on a media page.
@@ -166,17 +166,34 @@ checked again before file transfer. Browser download tickets are single-use,
 expire after 60 seconds, and are bound to the issuing app session; they are sent
 in a POST body. Session and Plex tokens never appear in converted download URLs.
 
-Up to two jobs per user and eight overall are allowed. Each season is limited to
-100 episodes. Queue items are removed on cancellation, transfer completion,
-transfer disconnect, a detected conversion error, expiry (24 hours) or graceful
-app shutdown. Keep the page open during preparation and save before expiry.
+There are at most two jobs per user and eight overall; a season is limited to
+100 episodes. Preparation expires after 24 hours. Once ready, a converted file is
+retained on Plex for up to six hours from readiness. Completed and interrupted
+transfers release their stream but retain the prepared queue items. **Retry
+download** requests a fresh single-use ticket for the same file, starting the
+transfer from byte zero without reconverting it. The browser's own resume/retry
+button is not supported by the single-use POST.
 
-Job tracking is in memory in this preview: app restarts require preparing the
-file again. An abrupt process kill can leave queue items on Plex until Plex
-expires them. This lifecycle needs observation during the NAS pilot. Browser
-resume after an interrupted transfer is not supported by the single-use POST;
-prepare a new download. If the file request itself fails, the browser displays
-the error response; go back to the app to retry.
+Selecting the same source and quality with the same account reuses its job,
+including after refreshing the page. Cache entries are isolated by account and
+Plex server. Current visibility, download policy, source/stream selection and
+Plex availability are checked again. Concurrent identical preparation requests
+share one conversion, and only one transfer of each job can run at a time.
+Season ZIPs are rebuilt from the retained converted episodes.
+
+Inactive entries are evicted least-recently-used when a new request needs a slot;
+active conversions and transfers are never evicted for another request. Cache
+retention is not extended by retries, and reaching expiry does not cut short a
+transfer already in progress. Plex can expire its files earlier. Dismissing a
+ready download card preserves its conversion; cancelling preparation still
+removes it. Definitive access/decision failures, explicit cancellation, expiry,
+eviction and graceful shutdown clean up owned queue items.
+
+Job tracking remains in memory: an app restart requires preparing the file again.
+An abrupt process kill can leave items on Plex until Plex expires them. Retention
+uses Plex's download staging storage; LibraryDownloadarr stores no extra media
+copy and requires no additional volume. Reuse on the user's authenticated PMS
+still needs deployment validation; automated tests use a simulated Plex server.
 
 ## Try the updated preview on your computer
 
@@ -306,3 +323,12 @@ remote failure was not reproduced and is not attributed to the worker. The
 bypass removes unnecessary interception; diagnostics are needed from the failing
 installation to identify its cause. Probe:
 https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36307251370
+
+## Reuse validation
+
+47 backend tests and 17 frontend tests cover retained-file retries after complete
+transfers, truncated Plex streams and browser disconnects; same-account cache
+hits, account/quality isolation, current policies, changed media/audio selection,
+concurrent requests, expiry, active-transfer protection and repeated season ZIPs.
+Retry sends a new ticket for the existing job. No claim is made that this fixes
+the separately reported remote browser failure.

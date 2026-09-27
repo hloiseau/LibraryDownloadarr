@@ -128,3 +128,21 @@ Références pour les mises à jour :
 - https://www.truenas.com/docs/scale/25.10/scaleuireference/apps/
 - https://apps.truenas.com/managing-apps/managing-installed-apps/
 - https://www.truenas.com/docs/scale/25.10/gettingstarted/versionnotes/
+
+## Réessayer sans reconvertir
+
+Après « Save file », le bouton **Retry download** relance le transfert du fichier
+déjà préparé. La conversion reste sur Plex jusqu'à six heures après sa préparation,
+y compris après une coupure du téléchargement. Le transfert recommence au début ;
+il ne reprend pas au dernier octet reçu.
+
+Après rechargement de la page, choisir le même film et la même qualité avec le
+même compte retrouve la préparation. Les comptes ne partagent pas leur cache,
+et les droits sont revérifiés avant de servir le fichier. Le cache compte au
+maximum deux préparations par compte et huit au total. Les entrées inactives les
+moins récemment utilisées libèrent leur place pour les nouvelles demandes.
+
+Plex peut expirer un fichier avant cette limite. Un redémarrage ou une mise à jour
+de LibraryDownloadarr vide le suivi en mémoire : il faudra alors reconvertir.
+Les fichiers utilisent le stockage temporaire de téléchargement déjà monté dans
+Plex, sans montage supplémentaire pour LibraryDownloadarr.

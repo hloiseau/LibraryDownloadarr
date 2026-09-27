@@ -16,6 +16,8 @@ interface Download {
   jobId?: string;
   readyCount?: number;
   fileCount?: number;
+  expiresAt?: number;
+  reused?: boolean;
   error?: string;
   isBulkDownload?: boolean; // True for season/album zips (no progress tracking)
 }
@@ -43,12 +45,12 @@ interface DownloadProviderProps {
 
 export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) => {
   const [downloads, setDownloads] = useState<Download[]>([]);
-  const preparations = useRef(new Map<string, { cancelled: boolean; jobId?: string; handedOff?: boolean }>());
+  const preparations = useRef(new Map<string, { cancelled: boolean; jobId?: string; handedOff?: boolean; ready?: boolean; saving?: boolean }>());
 
   useEffect(() => () => {
     for (const item of preparations.current.values()) {
-      if (!item.handedOff) {
-        item.cancelled = true;
+      item.cancelled = true;
+      if (!item.handedOff && !item.ready) {
         if (item.jobId) void api.cancelPreparedDownload(item.jobId).catch(() => undefined);
       }
     }
@@ -57,7 +59,7 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
   // Warn user before closing/refreshing if downloads are in progress
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      const activeDownloads = downloads.filter(d => ['downloading', 'preparing', 'ready'].includes(d.status));
+      const activeDownloads = downloads.filter(d => ['downloading', 'preparing'].includes(d.status));
 
       if (activeDownloads.length > 0) {
         // Standard way to show browser confirmation dialog
@@ -101,7 +103,7 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
     setDownloads((prev) => [...prev, newDownload]);
 
     if (quality !== 'original') {
-      const preparation: { cancelled: boolean; jobId?: string; handedOff?: boolean } = { cancelled: false };
+      const preparation: { cancelled: boolean; jobId?: string; handedOff?: boolean; ready?: boolean; saving?: boolean } = { cancelled: false };
       preparations.current.set(downloadId, preparation);
       try {
         let job = await api.prepareDownload({ ratingKey, quality,
@@ -112,6 +114,7 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
             ...d, jobId: job.id, filename: job.filename,
             status: job.state === 'sending' ? 'handedOff' : job.state,
             readyCount: job.readyCount, fileCount: job.fileCount, error: job.error,
+            expiresAt: job.expiresAt, reused: job.reused ?? d.reused,
             preparationStage: job.stage || 'deciding', preparationProgress: job.progress ?? null,
           } : d));
           if (job.state === 'error') {
@@ -119,7 +122,11 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
             preparations.current.delete(downloadId);
             return;
           }
-          if (job.state === 'ready') return;
+          if (job.state === 'ready' || job.state === 'sending') {
+            preparation.ready = true;
+            preparation.handedOff = job.state === 'sending';
+            return;
+          }
           await new Promise(resolve => setTimeout(resolve, 2500));
           if (!preparation.cancelled) job = await api.getPreparedDownload(job.id);
         }
@@ -235,12 +242,15 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
 
   const savePreparedDownload = async (id: string) => {
     const download = downloads.find(d => d.id === id);
-    if (!download?.jobId || download.status !== 'ready') return;
+    const preparation = preparations.current.get(id);
+    if (!download?.jobId || !['ready', 'handedOff'].includes(download.status) ||
+        !preparation || preparation.cancelled || preparation.saving) return;
+    const previousStatus = download.status;
+    preparation.saving = true;
     setDownloads(prev => prev.map(d => d.id === id ? { ...d, status: 'sending' } : d));
     try {
       const ticket = await api.getDownloadTicket(download.jobId);
-      const preparation = preparations.current.get(id);
-      if (!preparation || preparation.cancelled) return;
+      if (preparation.cancelled) return;
       // A native attachment response saves to disk; no multi-GB Blob in the SPA.
       const form = document.createElement('form');
       form.method = 'POST';
@@ -250,10 +260,15 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
       form.appendChild(input); document.body.appendChild(form);
       preparation.handedOff = true;
       form.submit(); form.remove();
-      setDownloads(prev => prev.map(d => d.id === id ? { ...d, status: 'handedOff' } : d));
+      setDownloads(prev => prev.map(d => d.id === id ? { ...d, status: 'handedOff', error: undefined } : d));
     } catch (error: any) {
-      setDownloads(prev => prev.map(d => d.id === id ? { ...d, status: 'ready',
-        error: error.response?.data?.error || 'Could not start the download. Try again.' } : d));
+      const status = error.response?.status;
+      setDownloads(prev => prev.map(d => d.id === id ? { ...d,
+        status: status === 404 || status === 410 ? 'error' : previousStatus,
+        error: status === 409 ? 'A transfer is still running. Wait for it to finish or cancel it in your browser, then retry.'
+          : error.response?.data?.error || 'Could not start the download. Try again.' } : d));
+    } finally {
+      preparation.saving = false;
     }
   };
 
@@ -261,7 +276,7 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
     const preparation = preparations.current.get(id);
     if (preparation) {
       preparation.cancelled = true;
-      if (preparation.jobId && !preparation.handedOff) void api.cancelPreparedDownload(preparation.jobId).catch(() => undefined);
+      if (preparation.jobId && !preparation.handedOff && !preparation.ready) void api.cancelPreparedDownload(preparation.jobId).catch(() => undefined);
       preparations.current.delete(id);
     }
     setDownloads((prev) => prev.filter((d) => d.id !== id));

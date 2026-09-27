@@ -23,7 +23,7 @@ export const DownloadManager: React.FC = () => {
             </div>
             <button
               onClick={() => removeDownload(download.id)}
-              aria-label={download.status === 'preparing' || download.status === 'ready' ? 'Cancel download' : 'Dismiss download'}
+              aria-label={download.status === 'preparing' ? 'Cancel download' : 'Dismiss download'}
               className="text-gray-400 hover:text-white transition-colors flex-shrink-0"
             >
               ✕
@@ -38,13 +38,22 @@ export const DownloadManager: React.FC = () => {
             <div className="space-y-2">
               <PreparationProgress stage="ready" progress={100} readyCount={download.readyCount}
                 fileCount={download.fileCount} startedAt={download.startedAt} />
+              {download.reused && <p className="text-xs text-green-400">Reusing your prepared file — no new conversion.</p>}
               {download.error && <p className="text-xs text-red-400">{download.error}</p>}
               <button className="btn-primary text-sm" onClick={() => savePreparedDownload(download.id)}>Save file</button>
             </div>
           )}
           {download.status === 'sending' && <p className="text-xs text-primary-400">Starting download…</p>}
           {download.status === 'handedOff' && (
-            <p className="text-xs text-gray-300">Sent to your browser. Check its download manager for progress.</p>
+            <div className="space-y-2">
+              <p className="text-xs text-gray-300">Sent to your browser. Check its download manager for progress.</p>
+              {download.error && <p className="text-xs text-red-400">{download.error}</p>}
+              <button className="btn-primary text-sm" onClick={() => savePreparedDownload(download.id)}>Retry download</button>
+              <p className="text-xs text-gray-400">Uses the prepared file without converting again.</p>
+            </div>
+          )}
+          {download.expiresAt && ['ready', 'handedOff'].includes(download.status) && (
+            <p className="text-xs text-gray-400 mt-2">Kept until {new Date(download.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}, unless Plex expires it or space is needed for another download.</p>
           )}
           {download.status === 'downloading' && (
             <>

@@ -817,3 +817,15 @@ still intercepts the attachment navigation. Keep all APIs and non-GET requests
 out of both worker interception and caching. Bump the worker cache version when
 changing this behavior. Transfer logs use only job id, fixed stages, numeric
 statuses, byte counts and bounded error codes; never serialize Axios errors.
+
+Ready conversions now remain in their owned Plex queues for six hours from first
+readiness. Transfer finish/disconnect releases only the attempt's AbortController;
+never call cancel() on a normal file response close. An attempt-scoped finalizer
+cannot alter a newer retry. create() deduplicates by owner/server/request and
+reuses unexpired jobs; checks refresh access, source/stream signatures and queue
+availability. Seasons capture full episode metadata for stable signatures.
+Reservation/eviction is serialized, capped at two jobs per owner/eight total, and
+only idle entries can be evicted. Expiry skips live transfers and finishes cleanup
+afterward. Retry does not extend retention. Cache metadata is in memory; shutdown
+still removes Plex items. The UI keeps ready jobs on dismissal/unmount and uses a
+new POST ticket for Retry download; native byte-range resume is not implemented.
