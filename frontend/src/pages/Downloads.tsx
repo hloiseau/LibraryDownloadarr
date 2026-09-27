@@ -26,6 +26,7 @@ export const DownloadJobCard: React.FC<{
     <div>
       <Link to={mediaPath(job.ratingKey)} className="font-semibold hover:text-primary-400 break-words">{job.title}</Link>
       <p className="text-sm text-gray-400 mt-1">{qualityLabel(job.quality)}{job.season ? ` · ${job.fileCount} episodes` : ''}</p>
+      {job.audioLabel && <p className="text-xs text-gray-400 mt-1">Audio: {job.audioLabel} · Subtitles: {job.subtitleLabel}</p>}
       <p className="text-xs text-gray-500 mt-1 break-all">{job.filename}</p>
     </div>
     {job.state === 'preparing' && <PreparationProgress stage={job.stage} progress={job.progress}
@@ -50,6 +51,7 @@ export const DownloadHistoryList: React.FC<{ entries: DownloadHistoryEntry[] }> 
       <div className="min-w-0">
         <Link className="font-medium hover:text-primary-400 break-words" to={mediaPath(entry.media_key)}>{entry.media_title}</Link>
         <p className="text-sm text-gray-400 mt-1">{qualityLabel(entry.quality)} · {sizeLabel(entry.file_size)}</p>
+        {entry.audio_selection && <p className="text-xs text-gray-400 mt-1">Audio: {entry.audio_selection} · Subtitles: {entry.subtitle_selection}</p>}
         <p className="text-xs text-gray-500 mt-1">{dateLabel(entry.downloaded_at)} · {entry.transfer_status === 'transferred'
           ? 'Transferred to browser' : entry.transfer_status === 'requested' ? 'Download requested' : 'Recorded download'}</p>
       </div>

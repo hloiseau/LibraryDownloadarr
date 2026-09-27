@@ -163,3 +163,20 @@ L'historique global de l'administrateur reste disponible séparément.
 **Transferred to browser** signifie que le serveur a terminé l'envoi, sans prouver
 l'enregistrement sur le disque du navigateur. Les téléchargements originaux sont
 marqués comme demandés ; les anciens enregistrements gardent un statut neutre.
+
+## Choisir la langue et les sous-titres
+
+Le bouton **Download** d'un film/épisode ou **Season** ouvre les options avec
+**Quality**, **Audio** et **Subtitles** côte à côte. **None** désactive les
+sous-titres. **Plex selection** conserve le choix actuel du compte pour ce média.
+Pour une saison, seules les pistes correspondantes présentes dans tous les
+épisodes sont proposées. Les épisodes en plusieurs fichiers se téléchargent
+individuellement pour choisir leurs pistes.
+
+Une sélection explicite met aussi à jour la piste choisie sur la fiche du média
+dans le compte Plex connecté. Le fichier converti garde une seule piste audio,
+et ses sous-titres sont incrustés, donc non désactivables après téléchargement.
+Le mode Original conserve les pistes intégrées au fichier sans le convertir.
+
+Le cache distingue les choix de pistes, qui apparaissent aussi dans les fichiers,
+la file et l'historique. Aucun changement de compose ni de Caddy n'est requis.

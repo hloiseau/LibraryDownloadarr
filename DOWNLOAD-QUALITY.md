@@ -127,8 +127,8 @@ session access or administrator token is needed. For seasons, progress is
 weighted by episode duration when all durations are available, otherwise by file
 count. Missing percentages use an indeterminate animation instead of invented
 progress. Only verified ready files reach 100%; transfer after Save file is
-tracked by the browser's download manager. Regression coverage includes 52 backend
-tests and 21 frontend tests; the progress UI is not yet independently tested on
+tracked by the browser's download manager. Regression coverage includes 58 backend
+tests and 25 frontend tests; the progress UI is not yet independently tested on
 the live NAS.
 
 Select Original, 720p / 2 Mbps, 720p / 4 Mbps or 1080p / 8 Mbps on a media page.
@@ -138,9 +138,10 @@ the app does not accumulate the converted file in a JavaScript Blob. A season
 is delivered as a ZIP containing the converted episodes.
 
 The bitrate is a target, not an exact file-size guarantee. Resolution is a maximum.
-The selected audio/subtitle streams follow Plex's per-user selection; selected
-subtitles are burned into the video. This preview does not offer a separate
-language selector or preserve all audio/subtitle tracks. Subtitle burn-in and HDR
+Download options now offer audio and subtitle selectors next to quality. The
+default is Plex's per-user selection; explicit choices are applied before queuing.
+Selected subtitles are burned into the video; the converted file does not retain
+multiple audio/subtitle tracks. Subtitle burn-in and HDR
 tone mapping can affect conversion speed and hardware use.
 
 There is no fallback to the original file when conversion fails. The app checks
@@ -358,3 +359,37 @@ history migration and persistence, literal search and pagination, ordinary-user
 navigation, restoring jobs, fresh-ticket saving, and leaving without cancellation.
 These automated checks use simulated Plex and frontend rendering/handler tests;
 the new page has not yet been validated on the live NAS.
+
+## Choose audio and subtitles
+
+Click **Download** on a movie/episode or **Season** for a season ZIP. The options
+dialog shows **Quality**, **Audio** and **Subtitles** together. Choose a listed
+track, keep **Plex selection**, or select **None** for no subtitles. Original
+downloads keep embedded tracks unchanged; selection controls are disabled there.
+Closing the dialog does not start a conversion or change any Plex preference.
+
+The options are read with the signed-in user's access and checked again when
+preparing. Season choices match language, track title, codec/channels and flags
+such as forced/SDH/commentary across every episode; ambiguous or missing matches
+are excluded. Full metadata is fetched because children lists may omit streams.
+Multi-part season episodes require individual-file selection.
+
+Explicit selection uses Plex's documented per-user stream selection API. This
+also updates the item's selection in that user's Plex account, as stated in the
+dialog. The app verifies the updated selection before queuing and checks the
+requested source stream ids in Plex's output decision before handing out bytes.
+Subtitle None also disables subtitles in the conversion request. Different app
+requests cannot change tracks underneath an overlapping active conversion for
+the same account. Requests from other accounts remain independent.
+
+Prepared files with different selections have different cache keys and filenames.
+Explicitly prepared tracks remain reusable if the account later selects another
+language; file identity and permissions are still checked. Track descriptions
+appear in the queue and new history records; legacy history remains unchanged.
+
+Validation: 58 backend and 25 frontend tests plus both production builds. Tests
+cover authenticated options, exact source selection, account isolation, season
+matching and missing tracks, None, conflicting requests, rejected selections,
+wrong output decisions, cache separation/reuse, persistent history labels, and
+dialog loading, stale responses, cancellation and submission. Plex is simulated;
+actual multilingual downloads on the live NAS remain to be validated.

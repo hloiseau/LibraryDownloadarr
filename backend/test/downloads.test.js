@@ -32,6 +32,20 @@ async function fixture(t, options = {}) {
   let nextQueue = 1;
   let nextItem = 1;
   const state = { status: 'processing', denied: false, wrongDecision: false, huge: false, ...options };
+  const selections = new Map();
+  const addStreams = (item, token) => {
+    const base = Number(item.ratingKey) * 100;
+    const part = item.Media[0].Part[0]; part.id = Number(item.ratingKey) * 10;
+    const current = selections.get(`${token}:${part.id}`) || { audio: base + 1, subtitle: 0 };
+    part.Stream = [
+      { id: base + 1, streamType: 2, language: 'English', languageCode: 'eng', codec: 'aac', channels: 2 },
+      { id: base + 2, streamType: 2, language: 'French', languageCode: 'fra', codec: 'aac', channels: 2 },
+      { id: base + 3, streamType: 3, language: 'French', languageCode: 'fra', codec: 'srt' },
+      { id: base + 4, streamType: 3, language: 'French', languageCode: 'fra', codec: 'srt', forced: true },
+    ].filter(stream => !(state.missingFrench && item.ratingKey === '3' && stream.id === base + 2))
+      .map(stream => ({ ...stream, selected: stream.id === (stream.streamType === 2 ? current.audio : current.subtitle) }));
+    return item;
+  };
   const plex = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://mock');
     const token = req.headers['x-plex-token'];
@@ -41,12 +55,23 @@ async function fixture(t, options = {}) {
     if (!['shared-token', 'other-token', 'admin-token'].includes(token)) return send({}, 401);
     if (state.denied) return send({}, 403);
     if (url.pathname === '/identity') return send({ MediaContainer: { version: '1.43.0-test' } });
+    if (url.pathname.startsWith('/library/parts/') && req.method === 'PUT') {
+      const partId = Number(url.pathname.split('/')[3]);
+      const base = partId * 10;
+      const current = selections.get(`${token}:${partId}`) || { audio: base + 1, subtitle: 0 };
+      if (!state.ignoreStreamSelection) selections.set(`${token}:${partId}`, {
+        audio: url.searchParams.has('audioStreamID') ? Number(url.searchParams.get('audioStreamID')) : current.audio,
+        subtitle: url.searchParams.has('subtitleStreamID') ? Number(url.searchParams.get('subtitleStreamID')) : current.subtitle,
+      });
+      return send({});
+    }
     if (url.pathname.startsWith('/library/metadata/')) {
       const id = url.pathname.split('/')[3];
       if (id === '999') return send({}, 403);
       const items = url.pathname.endsWith('/children') ? [media('2'), media('3')] : [media(id)];
       items.forEach(item => { if (state.durations?.[item.ratingKey] !== undefined) item.duration = state.durations[item.ratingKey]; });
       if (state.sourceSize) items.forEach(item => { item.Media[0].Part[0].size = state.sourceSize; });
+      if (state.streams) items.forEach(item => addStreams(item, token));
       if (state.audioSelection) items.forEach(item => { item.Media[0].Part[0].Stream = [
         { id: 'audio-en', streamType: 2, selected: state.audioSelection === 'en' },
         { id: 'audio-fr', streamType: 2, selected: state.audioSelection === 'fr' },
@@ -69,7 +94,9 @@ async function fixture(t, options = {}) {
       // Unknown names with no platform/device fallback fail before transcoding.
       queue.invalidProfile = req.headers['x-plex-client-profile-name'] !== 'Generic';
       queue.quality = url.searchParams.get('videoBitrate') === '2000' ? '720p-2' : url.searchParams.get('videoBitrate') === '4000' ? '720p-4' : '1080p-8';
-      queue.items = url.searchParams.get('keys').split(',').map(key => ({ key, id: nextItem++, queueId: Number(queueId) }));
+      queue.items = url.searchParams.get('keys').split(',').map(key => ({ key, id: nextItem++, queueId: Number(queueId),
+        streams: state.streams ? addStreams(media(key.split('/').pop()), token).Media[0].Part[0].Stream.filter(stream => stream.selected)
+          .filter(stream => stream.streamType !== 3 || url.searchParams.get('subtitles') !== 'none') : undefined }));
       return send({ MediaContainer: { AddedQueueItems: queue.items } });
     }
     if (operation === 'items' && req.method === 'DELETE') {
@@ -87,6 +114,11 @@ async function fixture(t, options = {}) {
     })) } });
     if (action === 'decision') {
       const result = decision(queue.quality);
+      const entry = queue.items.find(item => item.id === Number(itemId));
+      if (entry?.streams) result.MediaContainer.Metadata[0].Media[0].Part[0].Stream.push(...entry.streams.map(stream => ({
+        ...stream, id: state.wrongTrack && stream.streamType === 2 ? 9999 : stream.id,
+        decision: stream.streamType === 2 ? 'transcode' : state.wrongSubtitle ? 'copy' : 'burn',
+      })));
       if (state.wrongDecision) result.MediaContainer.Metadata[0].Media[0].Part[0].Stream[0].height = 2160;
       return send(result);
     }
@@ -106,6 +138,111 @@ async function fixture(t, options = {}) {
   return { requests, queues, state, service, credentials };
 }
 const request = { ratingKey: '1', partKey: '/library/parts/1/file.mkv', quality: '720p-2' };
+
+test('track options are authenticated, read-only, part-scoped and distinguish forced subtitles', async t => {
+  const f = await fixture(t, { streams: true });
+  const app = await application(t, f);
+  const response = await app.call('/options?' + new URLSearchParams(request));
+  assert.equal(response.status, 200);
+  const options = await response.json();
+  assert.deepEqual(options.audio.map(option => option.id), ['plex', 'stream:101', 'stream:102']);
+  assert.deepEqual(options.subtitle.map(option => option.id), ['plex', 'none', 'stream:103', 'stream:104']);
+  assert.match(options.subtitle[3].label, /Forced/);
+  assert.ok(f.requests.every(req => req.method === 'GET' && req.token === 'shared-token'));
+  assert.doesNotMatch(JSON.stringify(options), /token|library\/parts/);
+  assert.equal((await app.call('/options?' + new URLSearchParams(request), {}, 'missing')).status, 401);
+  assert.equal((await app.call('/options?' + new URLSearchParams({ ...request, partKey: '/library/parts/999/file.mkv' }))).status, 400);
+  app.settings['download_policy:alice'] = JSON.stringify({ enabled: false, qualities: ['720p-2'], libraries: null, serverId: 'server-1' });
+  assert.equal((await app.call('/options?' + new URLSearchParams(request))).status, 403);
+});
+
+test('explicit tracks are applied to the caller before queuing and rechecked before transfer', async t => {
+  const f = await fixture(t, { streams: true, status: 'available' });
+  const app = await application(t, f);
+  const chosen = { ...request, audio: 'stream:102', subtitle: 'stream:104' };
+  const job = await (await app.call('', { method: 'POST', body: JSON.stringify(chosen) })).json();
+  assert.match(job.audioLabel, /French/); assert.match(job.subtitleLabel, /Forced/);
+  assert.match(job.filename, /Audio French.*Subs French/);
+  const selection = f.requests.find(req => req.method === 'PUT');
+  assert.equal(selection.path, '/library/parts/10');
+  assert.equal(selection.params.get('audioStreamID'), '102');
+  assert.equal(selection.params.get('subtitleStreamID'), '104');
+  assert.equal(selection.params.get('allParts'), '0');
+  assert.ok(f.requests.indexOf(selection) < f.requests.findIndex(req => req.path.endsWith('/add')));
+  assert.equal((await f.service.status(job.id, 'alice', f.credentials)).state, 'ready');
+  const ticket = await (await app.call(`/${job.id}/ticket`, { method: 'POST' })).json();
+  const response = await app.call(`/${job.id}/file`, { method: 'POST', body: JSON.stringify(ticket) });
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), mp4);
+  assert.match(app.logs[0][4].audio, /French/); assert.match(app.logs[0][4].subtitle, /Forced/);
+  assert.ok(f.requests.every(req => req.token === 'shared-token'));
+  f.state.wrongTrack = true;
+  await assert.rejects(f.service.beginTransfer(job.id, 'alice', f.credentials), /selected audio or subtitles/);
+});
+
+test('None disables subtitles, and differently selected cached conversions remain distinct and reusable', async t => {
+  const f = await fixture(t, { streams: true, status: 'available' });
+  const french = { ...request, audio: 'stream:102', subtitle: 'none' };
+  const english = { ...request, audio: 'stream:101', subtitle: 'stream:103' };
+  const first = await f.service.create('alice', f.credentials, french);
+  await f.service.status(first.id, 'alice', f.credentials);
+  assert.equal(f.requests.find(req => req.path.endsWith('/add')).params.get('subtitles'), 'none');
+  const second = await f.service.create('alice', f.credentials, english);
+  await f.service.status(second.id, 'alice', f.credentials);
+  assert.notEqual(first.id, second.id);
+  const reused = await f.service.create('alice', f.credentials, french);
+  assert.equal(reused.id, first.id); assert.equal(reused.reused, true);
+  assert.equal(f.requests.filter(req => req.path.endsWith('/add')).length, 2);
+  assert.equal(f.requests.filter(req => req.method === 'PUT').length, 2, 'a cache hit must not change Plex preferences again');
+  const transfer = await f.service.beginTransfer(first.id, 'alice', f.credentials);
+  await transfer.finish();
+});
+
+test('forged tracks, ignored selections and incorrect decisions never silently download another language', async t => {
+  const f = await fixture(t, { streams: true, status: 'available' });
+  for (const input of [{ audio: 'none' }, { audio: 102 }, { audio: 'stream:999' }, { subtitle: 'stream:102' }]) {
+    await assert.rejects(f.service.create('alice', f.credentials, { ...request, ...input }), { status: 400 });
+  }
+  assert.equal(f.requests.filter(req => req.method === 'PUT' || req.path === '/downloadQueue').length, 0);
+  f.state.ignoreStreamSelection = true;
+  await assert.rejects(f.service.create('alice', f.credentials, { ...request, audio: 'stream:102' }), /did not apply/);
+  assert.equal(f.requests.filter(req => req.path === '/downloadQueue').length, 0);
+  f.state.ignoreStreamSelection = false; f.state.wrongSubtitle = true;
+  const job = await f.service.create('alice', f.credentials, { ...request, subtitle: 'stream:103' });
+  const failed = await f.service.status(job.id, 'alice', f.credentials);
+  assert.equal(failed.state, 'error'); assert.match(failed.error, /did not confirm/);
+  assert.ok([...f.queues.values()].every(queue => queue.items.length === 0));
+});
+
+test('a season resolves matching tracks to each episode id and rejects a disappeared track before any mutation', async t => {
+  const f = await fixture(t, { streams: true, status: 'available' });
+  const season = { ratingKey: '100', quality: '720p-2', season: true };
+  const options = await f.service.options(f.credentials, season);
+  const audio = options.audio.find(option => option.label.includes('French')).id;
+  const subtitle = options.subtitle.find(option => option.label.includes('Forced')).id;
+  f.state.missingFrench = true;
+  assert.ok(!(await f.service.options(f.credentials, season)).audio.some(option => option.id === audio));
+  await assert.rejects(f.service.create('alice', f.credentials, { ...season, audio, subtitle }), { status: 400 });
+  assert.equal(f.requests.filter(req => req.method === 'PUT').length, 0);
+  f.state.missingFrench = false;
+  const job = await f.service.create('alice', f.credentials, { ...season, audio, subtitle });
+  assert.deepEqual(f.requests.filter(req => req.method === 'PUT').map(req => req.params.get('audioStreamID')), ['202', '302']);
+  assert.equal((await f.service.status(job.id, 'alice', f.credentials)).state, 'ready');
+  const transfer = await f.service.beginTransfer(job.id, 'alice', f.credentials); await transfer.finish();
+});
+
+test('simultaneous conflicting selections cannot change an active conversion, but other users can select independently', async t => {
+  const f = await fixture(t, { streams: true });
+  const results = await Promise.allSettled([
+    f.service.create('alice', f.credentials, { ...request, audio: 'stream:102' }),
+    f.service.create('alice', f.credentials, { ...request, audio: 'stream:101' }),
+  ]);
+  assert.equal(results[0].status, 'fulfilled');
+  assert.equal(results[1].status, 'rejected'); assert.equal(results[1].reason.status, 409);
+  assert.equal(f.requests.filter(req => req.method === 'PUT').length, 1);
+  const bob = await f.service.create('bob', { ...f.credentials, token: 'other-token' }, { ...request, audio: 'stream:101' });
+  assert.notEqual(bob.id, results[0].value.id);
+  assert.equal(f.requests.filter(req => req.method === 'PUT').at(-1).token, 'other-token');
+});
 
 test('shared users receive real queue conversion progress through waiting, finalizing and verified readiness', async t => {
   const f = await fixture(t, { status: 'waiting' });
@@ -418,7 +555,7 @@ test('a Plex stream cut short is logged and can be retried without conversion', 
   assert.deepEqual(Buffer.from(await retry.arrayBuffer()), mp4);
   assert.equal(f.requests.filter(r => r.path.endsWith('/add')).length, 1);
   assert.equal(app.logs.length, 1);
-  assert.deepEqual(app.logs[0][4], { quality: '720p-2', status: 'transferred' });
+  assert.deepEqual(app.logs[0][4], { quality: '720p-2', status: 'transferred', audio: 'Plex selection', subtitle: 'Plex selection' });
 });
 
 test('native ticket streams a file, is single-use and respects session revocation', async t => {

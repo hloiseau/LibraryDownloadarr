@@ -147,6 +147,8 @@ export class DatabaseService {
     if (!logColumns.some(column => column.name === 'transfer_status')) {
       this.db.exec("ALTER TABLE download_logs ADD COLUMN transfer_status TEXT NOT NULL DEFAULT 'recorded'");
     }
+    if (!logColumns.some(column => column.name === 'audio_selection')) this.db.exec('ALTER TABLE download_logs ADD COLUMN audio_selection TEXT');
+    if (!logColumns.some(column => column.name === 'subtitle_selection')) this.db.exec('ALTER TABLE download_logs ADD COLUMN subtitle_selection TEXT');
     this.db.exec('CREATE INDEX IF NOT EXISTS download_logs_user_date ON download_logs(user_id, downloaded_at DESC)');
 
     // Old versions used PIN ids as account ids. Keep history, but require those
@@ -302,13 +304,13 @@ export class DatabaseService {
 
   // Download logs
   logDownload(userId: string, mediaTitle: string, mediaKey: string, fileSize?: number,
-    details: { quality: string; status: 'requested' | 'transferred' } = { quality: 'original', status: 'requested' }): void {
+    details: { quality: string; status: 'requested' | 'transferred'; audio?: string; subtitle?: string } = { quality: 'original', status: 'requested' }): void {
     const id = this.generateId();
     const stmt = this.db.prepare(`
-      INSERT INTO download_logs (id, user_id, media_title, media_key, file_size, downloaded_at, quality, transfer_status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO download_logs (id, user_id, media_title, media_key, file_size, downloaded_at, quality, transfer_status, audio_selection, subtitle_selection)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run(id, userId, mediaTitle, mediaKey, fileSize, Date.now(), details.quality, details.status);
+    stmt.run(id, userId, mediaTitle, mediaKey, fileSize, Date.now(), details.quality, details.status, details.audio, details.subtitle);
   }
 
   getDownloadHistory(userId: string, limit: number = 50, offset: number = 0, search: string = ''): any[] {

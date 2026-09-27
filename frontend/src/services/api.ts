@@ -1,4 +1,4 @@
-import { DownloadQuality, PreparedDownload, DownloadHistoryEntry, DownloadPolicy, PermissionUser, PlexServerChoice } from '../types';
+import { DownloadQuality, PreparedDownload, DownloadHistoryEntry, DownloadPolicy, PermissionUser, PlexServerChoice, StreamSelection, DownloadStreamOptions } from '../types';
 import axios, { AxiosInstance } from 'axios';
 import {
   User,
@@ -186,8 +186,12 @@ class ApiClient {
     return response.data.stats;
   }
 
-  async prepareDownload(input: { ratingKey: string; partKey?: string; season?: boolean; quality: Exclude<DownloadQuality, 'original'> }): Promise<PreparedDownload> {
+  async prepareDownload(input: StreamSelection & { ratingKey: string; partKey?: string; season?: boolean; quality: Exclude<DownloadQuality, 'original'> }): Promise<PreparedDownload> {
     return (await this.client.post('/downloads', input)).data;
+  }
+
+  async getDownloadStreamOptions(params: { ratingKey: string; partKey?: string; season?: boolean; quality: Exclude<DownloadQuality, 'original'> }): Promise<DownloadStreamOptions> {
+    return (await this.client.get('/downloads/options', { params })).data;
   }
 
   async getPreparedDownload(id: string): Promise<PreparedDownload> {
