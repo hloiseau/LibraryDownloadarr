@@ -1,0 +1,22 @@
+name: Native browser download probe
+on:
+  push:
+    branches: [codex/native-download-probe-a6fa824141dc]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci --prefix backend && npm run build --prefix backend
+      - run: npm install --prefix "$RUNNER_TEMP/browser-probe" playwright@1.55.0
+      - name: Compare service worker interception with native bypass
+        run: |
+          export CHROME_PATH="$(command -v google-chrome)"
+          export PLAYWRIGHT_MODULE="$RUNNER_TEMP/browser-probe/node_modules/playwright"
+          node backend/test/native-download-probe.cjs
