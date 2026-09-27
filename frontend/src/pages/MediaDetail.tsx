@@ -341,29 +341,6 @@ export const MediaDetail: React.FC = () => {
                       )}
                     </div>
 
-                    {['movie', 'episode', 'season', 'show'].includes(media.type) && (
-                      <div className="mb-5 space-y-2">
-                        <label htmlFor="download-quality" className="block text-sm font-medium">Download quality</label>
-                        <select id="download-quality" value={quality}
-                          onChange={event => {
-                            const selected = event.target.value as DownloadQuality;
-                            setQuality(selected); localStorage.setItem('downloadQuality', selected);
-                          }}
-                          className="w-full md:w-auto rounded-lg border border-dark-50 bg-dark-200 px-3 py-2 text-white">
-                          <option disabled={!policy?.qualities.includes('original')} value="original">Original file</option>
-                          <option disabled={!policy?.qualities.includes('720p-2')} value="720p-2">720p · 2 Mbps</option>
-                          <option disabled={!policy?.qualities.includes('720p-4')} value="720p-4">720p · 4 Mbps</option>
-                          <option disabled={!policy?.qualities.includes('1080p-8')} value="1080p-8">1080p · 8 Mbps</option>
-                        </select>
-                        {quality !== 'original' && (
-                          <p className="text-xs text-gray-400 max-w-lg">
-                            Choose audio and subtitles in the download options. Plex prepares an MP4 with one audio track;
-                            selected subtitles are burned in. Sizes below are for the originals. You can close this page and follow preparation in Downloads.
-                          </p>
-                        )}
-                      </div>
-                    )}
-
                     {media.type === 'album' ? (
                       // Album (Audiobook) - Show tracks
                       tracks.length > 0 ? (

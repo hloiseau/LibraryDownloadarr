@@ -131,7 +131,10 @@ tracked by the browser's download manager. Regression coverage includes 58 backe
 tests and 25 frontend tests; the progress UI is not yet independently tested on
 the live NAS.
 
-Select Original, 720p / 2 Mbps, 720p / 4 Mbps or 1080p / 8 Mbps on a media page.
+Click **Download** or **Season** on a media page to open the download options.
+Select Original, 720p / 2 Mbps, 720p / 4 Mbps or 1080p / 8 Mbps alongside audio
+and subtitles in this dialog. It is the only quality selector; the last confirmed
+quality is remembered for the next download.
 Plex prepares the selected video as an H.264/AAC MP4. When preparation finishes,
 click **Save file**. The browser's download manager handles the transfer directly;
 the app does not accumulate the converted file in a JavaScript Blob. A season
