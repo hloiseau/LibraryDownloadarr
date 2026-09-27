@@ -829,3 +829,25 @@ only idle entries can be evicted. Expiry skips live transfers and finishes clean
 afterward. Retry does not extend retention. Cache metadata is in memory; shutdown
 still removes Plex items. The UI keeps ready jobs on dismissal/unmount and uses a
 new POST ticket for Retry download; native byte-range resume is not implemented.
+
+## Personal downloads page
+
+`/downloads` is available to every authenticated account. GET `/api/downloads`
+lists only the caller's jobs on the configured server, refreshes preparation and
+checks ready-file availability. Snapshots include display title, ratingKey and
+creation time, never clients/tokens or internal queue data. File transfer still
+rechecks current Plex access, policy and source signatures. Do not share caches
+or history across accounts; the existing admin global history stays separate.
+
+Closing/refreshing the page stops local polling without cancelling preparation.
+Only explicit task cancellation removes it. The provider is keyed by session so
+account changes discard local notifications. `nativeDownload.ts` supplies the
+same fresh-ticket POST action to the page and floating cards. The page polls at
+five-second intervals, stops on unmount, and loads history independently of Plex.
+
+SQLite download_logs add nullable quality and transfer_status via additive
+migration. Legacy rows are `recorded`, original routes log `requested`, and
+converted routes log `transferred` only after pipeline completion. None proves a
+browser disk save. Own history supports bounded limit, offset and literal title
+search. History persists in the existing database volume; job/cache metadata
+remains in memory and is lost on app restart.

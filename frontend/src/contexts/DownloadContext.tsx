@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useRef, useEffect, ReactNode } from 'react';
 import { api } from '../services/api';
+import { savePreparedFile } from '../services/nativeDownload';
 import { DownloadQuality, PreparationStage } from '../types';
 
 interface Download {
@@ -45,21 +46,18 @@ interface DownloadProviderProps {
 
 export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) => {
   const [downloads, setDownloads] = useState<Download[]>([]);
-  const preparations = useRef(new Map<string, { cancelled: boolean; jobId?: string; handedOff?: boolean; ready?: boolean; saving?: boolean }>());
+  const preparations = useRef(new Map<string, { cancelled: boolean; discard?: boolean; jobId?: string; handedOff?: boolean; ready?: boolean; saving?: boolean }>());
 
   useEffect(() => () => {
     for (const item of preparations.current.values()) {
       item.cancelled = true;
-      if (!item.handedOff && !item.ready) {
-        if (item.jobId) void api.cancelPreparedDownload(item.jobId).catch(() => undefined);
-      }
     }
   }, []);
 
   // Warn user before closing/refreshing if downloads are in progress
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      const activeDownloads = downloads.filter(d => ['downloading', 'preparing'].includes(d.status));
+      const activeDownloads = downloads.filter(d => d.status === 'downloading');
 
       if (activeDownloads.length > 0) {
         // Standard way to show browser confirmation dialog
@@ -103,7 +101,7 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
     setDownloads((prev) => [...prev, newDownload]);
 
     if (quality !== 'original') {
-      const preparation: { cancelled: boolean; jobId?: string; handedOff?: boolean; ready?: boolean; saving?: boolean } = { cancelled: false };
+      const preparation: { cancelled: boolean; discard?: boolean; jobId?: string; handedOff?: boolean; ready?: boolean; saving?: boolean } = { cancelled: false };
       preparations.current.set(downloadId, preparation);
       try {
         let job = await api.prepareDownload({ ratingKey, quality,
@@ -118,7 +116,6 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
             preparationStage: job.stage || 'deciding', preparationProgress: job.progress ?? null,
           } : d));
           if (job.state === 'error') {
-            await api.cancelPreparedDownload(job.id).catch(() => undefined);
             preparations.current.delete(downloadId);
             return;
           }
@@ -130,9 +127,8 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
           await new Promise(resolve => setTimeout(resolve, 2500));
           if (!preparation.cancelled) job = await api.getPreparedDownload(job.id);
         }
-        await api.cancelPreparedDownload(job.id).catch(() => undefined);
+        if (preparation.discard) await api.cancelPreparedDownload(job.id).catch(() => undefined);
       } catch (error: any) {
-        if (preparation.jobId) await api.cancelPreparedDownload(preparation.jobId).catch(() => undefined);
         if (!preparation.cancelled) setDownloads(prev => prev.map(d => d.id === downloadId
           ? { ...d, status: 'error', error: error.response?.data?.error || error.message || 'Preparation failed' } : d));
         preparations.current.delete(downloadId);
@@ -249,17 +245,8 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
     preparation.saving = true;
     setDownloads(prev => prev.map(d => d.id === id ? { ...d, status: 'sending' } : d));
     try {
-      const ticket = await api.getDownloadTicket(download.jobId);
-      if (preparation.cancelled) return;
-      // A native attachment response saves to disk; no multi-GB Blob in the SPA.
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = `/api/downloads/${download.jobId}/file`;
-      const input = document.createElement('input');
-      input.type = 'hidden'; input.name = 'ticket'; input.value = ticket;
-      form.appendChild(input); document.body.appendChild(form);
+      if (!await savePreparedFile(download.jobId, () => preparation.cancelled)) return;
       preparation.handedOff = true;
-      form.submit(); form.remove();
       setDownloads(prev => prev.map(d => d.id === id ? { ...d, status: 'handedOff', error: undefined } : d));
     } catch (error: any) {
       const status = error.response?.status;
@@ -276,6 +263,7 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
     const preparation = preparations.current.get(id);
     if (preparation) {
       preparation.cancelled = true;
+      preparation.discard = !preparation.handedOff && !preparation.ready;
       if (preparation.jobId && !preparation.handedOff && !preparation.ready) void api.cancelPreparedDownload(preparation.jobId).catch(() => undefined);
       preparations.current.delete(id);
     }

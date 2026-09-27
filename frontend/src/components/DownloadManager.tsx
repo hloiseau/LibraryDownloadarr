@@ -1,17 +1,22 @@
 import React from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { useDownloads } from '../contexts/DownloadContext';
 import { PreparationProgress } from './PreparationProgress';
 
 export const DownloadManager: React.FC = () => {
   const { downloads, removeDownload, savePreparedDownload } = useDownloads();
+  const location = useLocation();
+  const visible = location.pathname === '/downloads'
+    ? downloads.filter(download => !download.jobId && download.status !== 'preparing') : downloads;
 
-  if (downloads.length === 0) {
+  if (visible.length === 0) {
     return null;
   }
 
   return (
     <div className="fixed top-20 right-4 sm:right-6 z-50 space-y-2 w-[calc(100%-2rem)] max-w-sm">
-      {downloads.map((download) => (
+      <Link to="/downloads" className="block bg-dark-100 rounded-lg px-4 py-2 text-sm text-primary-400 hover:underline">Open Downloads →</Link>
+      {visible.map((download) => (
         <div
           key={download.id}
           className="bg-dark-100 border border-dark-50 rounded-lg shadow-lg p-4"

@@ -82,6 +82,10 @@ export type DownloadQuality = 'original' | '720p-2' | '720p-4' | '1080p-8';
 export type PreparationStage = 'deciding' | 'waiting' | 'processing' | 'finalizing' | 'ready';
 export interface PreparedDownload {
   id: string;
+  title: string;
+  ratingKey: string;
+  createdAt: number;
+  season: boolean;
   filename: string;
   quality: Exclude<DownloadQuality, 'original'>;
   state: 'preparing' | 'ready' | 'sending' | 'error';
@@ -92,6 +96,16 @@ export interface PreparedDownload {
   error?: string;
   expiresAt: number;
   reused?: boolean;
+}
+
+export interface DownloadHistoryEntry {
+  id: string;
+  media_key: string;
+  media_title: string;
+  file_size: number | null;
+  downloaded_at: number;
+  quality: DownloadQuality | null;
+  transfer_status: 'recorded' | 'requested' | 'transferred';
 }
 
 export interface PlexServerChoice {

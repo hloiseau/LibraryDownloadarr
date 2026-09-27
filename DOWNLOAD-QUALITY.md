@@ -59,8 +59,8 @@ after changing servers the administrator must save policies for the new server.
 
 ## Download lifecycle and limits
 
-Choose a quality, wait for preparation, then click **Save file**. Keep the page
-open during preparation. Converted media is streamed without accumulating the
+Choose a quality, wait for preparation, then click **Save file**. You can close
+the page during preparation and return to **Downloads**. Converted media is streamed without accumulating the
 whole file in a browser Blob. Browser download tickets are single-use, expire
 after 60 seconds, and are sent in a POST body. Plex and session tokens do not
 appear in converted-download URLs; tickets are bound to the app session.
@@ -142,8 +142,8 @@ The operator reported successful authenticated transcoded downloads on
 Arc A310 assigned to Plex. This is an operator report, not an independent claim
 that every profile, hardware path or permission scenario was tested on that NAS.
 
-Automated validation uses 47 backend tests with a simulated Plex HTTP server and
-real Express routes, plus 17 frontend rendering/handler tests. It covers conversion
+Automated validation uses 52 backend tests with a simulated Plex HTTP server and
+real Express routes, plus 21 frontend rendering/handler tests. It covers conversion
 parameters, output guards, ownership, access revocation, queue cleanup, streaming,
 season ZIPs, one-use tickets, identity migration, policy enforcement, address
 selection, redaction, popup isolation and progress reporting. These tests are run during Docker builds.
@@ -200,3 +200,27 @@ Retention regression tests also cover complete and interrupted retries, browser
 disconnects, cache isolation, current policies, changed source/audio selection,
 expiry, eviction, concurrent requests and repeated ZIP transfers. They use mock
 Plex, not the user's live server.
+
+## Personal Downloads page
+
+Every signed-in user has a **Downloads** navigation entry (`/downloads`) with
+their conversions and transfers in progress, ready files and download history.
+Progress refreshes every five seconds. Ready files show expiry, **Save file** and
+removal actions. History supports title search, pagination and links back to media.
+The admin global history remains separate; accounts do not share prepared files
+or personal history. Current access and policy are checked before serving bytes.
+
+Closing/refreshing the page leaves conversions running. Returning fetches existing
+server-side jobs without preparing again. Existing retention and capacity limits
+apply; job metadata is still lost on app restart. History persists in the existing
+SQLite volume. The additive migration preserves legacy rows without inventing
+their quality or successful completion.
+
+Converted history records quality and completed server transfers. Original routes
+record download requests; legacy rows retain a neutral status. A completed server
+transfer does not prove that the browser saved the file on disk.
+
+New tests cover account isolation, task lifecycle and missing/expired files,
+history migration/persistence, literal search and pagination, ordinary-user
+navigation, recovering existing jobs and leaving without cancellation. The new
+page has not yet been validated on the live NAS.

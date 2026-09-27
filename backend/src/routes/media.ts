@@ -113,9 +113,14 @@ export const createMediaRouter = (db: DatabaseService) => {
   // Get download history (user's own downloads)
   router.get('/download-history', authMiddleware, async (req: AuthRequest, res) => {
     try {
-      const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
-      const history = db.getDownloadHistory(req.user!.id, limit);
-      return res.json({ history });
+      const limit = Number(req.query.limit ?? 50);
+      const offset = Number(req.query.offset ?? 0);
+      const search = req.query.search ?? '';
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(offset) || offset < 0 ||
+          typeof search !== 'string' || search.length > 200) return res.status(400).json({ error: 'Invalid history filters.' });
+      const history = db.getDownloadHistory(req.user!.id, limit + 1, offset, search);
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json({ history: history.slice(0, limit), hasMore: history.length > limit });
     } catch (error) {
       logger.error('Failed to get download history', { error });
       return res.status(500).json({ error: 'Failed to get download history' });

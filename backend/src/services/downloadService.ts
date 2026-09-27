@@ -45,10 +45,15 @@ interface DownloadJob {
   lastUsedAt: number;
   retained: boolean;
   season: boolean;
+  createdAt: number;
   removing?: Promise<void>;
 }
 export interface DownloadSnapshot {
   id: string;
+  title: string;
+  ratingKey: string;
+  createdAt: number;
+  season: boolean;
   quality: DownloadQuality;
   filename: string;
   state: DownloadJob['state'];
@@ -213,7 +218,8 @@ export class DownloadService {
     const progress = complete ? 100 : job.files.some(file => file.progress === null) ? null
       : Math.min(99, Math.floor(job.files.reduce((sum, file) => sum + file.progress! * weight(file), 0) /
           job.files.reduce((sum, file) => sum + weight(file), 0)));
-    return { id: job.id, quality: job.quality, filename: job.filename, state: job.state,
+    return { id: job.id, title: job.title, ratingKey: job.ratingKey, createdAt: job.createdAt, season: job.season,
+      quality: job.quality, filename: job.filename, state: job.state,
       readyCount: job.readyCount, fileCount: job.files.length, stage, progress, error: job.error, expiresAt: job.expiresAt };
   }
   private owned(id: string, owner: string): DownloadJob {
@@ -351,7 +357,7 @@ export class DownloadService {
         ratingKey: input.ratingKey, serverUrl: normalizeServer(credentials.serverUrl), queueId, files,
         filename: input.season ? `${safeFilename(`${root.parentTitle || 'Show'} - ${root.title}`)} - ${input.quality}.zip` : files[0].filename,
         state: 'preparing', readyCount: 0, expiresAt: Date.now() + this.ttlMs,
-        cacheKey: key, lastUsedAt: Date.now(), retained: false, season: !!input.season };
+        cacheKey: key, lastUsedAt: Date.now(), retained: false, season: !!input.season, createdAt: Date.now() };
       this.jobs.set(id, job);
       return this.snapshot(job);
     } catch (error) {
@@ -423,6 +429,34 @@ export class DownloadService {
       }
       throw error;
     }
+  }
+
+  async list(owner: string, credentials: DownloadCredentials): Promise<DownloadSnapshot[]> {
+    const server = normalizeServer(credentials.serverUrl);
+    const jobs = [...this.jobs.values()].filter(job => job.owner === owner && job.serverUrl === server &&
+      !job.removing && (job.expiresAt > Date.now() || job.state === 'sending'));
+    const snapshots: DownloadSnapshot[] = [];
+    for (const job of jobs) {
+      try {
+        await this.status(job.id, owner, credentials);
+        if (job.state === 'ready') {
+          try { await this.checkAvailable(job); }
+          catch (error) {
+            if (!(error instanceof DownloadError) || error.status !== 410) throw error;
+            if (job.state !== 'ready' || job.removing) continue;
+            job.state = 'error';
+            job.error = error.message;
+            await this.clearQueue(job.client, job.queueId);
+          }
+        }
+        if (!job.removing && this.jobs.get(job.id) === job) snapshots.push(this.snapshot(job));
+      } catch (error) {
+        // Cancellation/eviction may race a refresh. Other errors must remain
+        // visible so the page does not silently present stale files as ready.
+        if (!(error instanceof DownloadError) || error.status !== 404) throw error;
+      }
+    }
+    return snapshots.sort((a, b) => b.createdAt - a.createdAt);
   }
 
   async status(id: string, owner: string, credentials: DownloadCredentials): Promise<DownloadSnapshot> {
@@ -517,7 +551,7 @@ export class DownloadService {
   }
 
   async beginTransfer(id: string, owner: string, credentials: DownloadCredentials): Promise<{
-    filename: string; title: string; ratingKey: string; files: QueueFile[];
+    filename: string; title: string; ratingKey: string; quality: DownloadQuality; files: QueueFile[];
     open: (file: QueueFile) => Promise<{ stream: Readable; size?: number }>;
     abort: () => void;
     finish: () => Promise<void>;
@@ -557,7 +591,7 @@ export class DownloadService {
       throw safe;
     }
     return {
-      filename: job.filename, title: job.title, ratingKey: job.ratingKey, files: job.files,
+      filename: job.filename, title: job.title, ratingKey: job.ratingKey, quality: job.quality, files: job.files,
       abort: () => transfer.abort(),
       finish: async () => {
         // Each finalizer belongs to one attempt. An old response must never
