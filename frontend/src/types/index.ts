@@ -90,6 +90,8 @@ export interface PreparedDownload {
   stage: PreparationStage;
   progress: number | null;
   error?: string;
+  expiresAt: number;
+  reused?: boolean;
 }
 
 export interface PlexServerChoice {

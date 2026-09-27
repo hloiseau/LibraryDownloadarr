@@ -85,12 +85,33 @@ against a duration/quality-based bound. These checks rely on Plex's metadata;
 independent output inspection remains useful when qualifying a new server.
 
 There are at most two jobs per user and eight overall; a season is limited to
-100 episodes. Prepared jobs expire after 24 hours. Owned queue items are cleaned
-up on cancellation, detected failure, completed/disconnected transfer, expiry and
-graceful shutdown. Job tracking is in memory: an app restart requires preparing
-the file again. Abrupt termination can leave items until Plex expires them.
-Single-use POST downloads do not support browser resume; prepare a new download
-after an interrupted transfer.
+100 episodes. Preparation expires after 24 hours. Once ready, a converted file is
+retained on Plex for up to six hours from readiness. Completed and interrupted
+transfers release their stream but retain the prepared queue items. **Retry
+download** requests a fresh single-use ticket for the same file, starting the
+transfer from byte zero without reconverting it. The browser's own resume/retry
+button is not supported by the single-use POST.
+
+Selecting the same source and quality with the same account reuses its job,
+including after refreshing the page. Cache entries are isolated by account and
+Plex server. Current visibility, download policy, source/stream selection and
+Plex availability are checked again. Concurrent identical preparation requests
+share one conversion, and only one transfer of each job can run at a time.
+Season ZIPs are rebuilt from the retained converted episodes.
+
+Inactive entries are evicted least-recently-used when a new request needs a slot;
+active conversions and transfers are never evicted for another request. Cache
+retention is not extended by retries, and reaching expiry does not cut short a
+transfer already in progress. Plex can expire its files earlier. Dismissing a
+ready download card preserves its conversion; cancelling preparation still
+removes it. Definitive access/decision failures, explicit cancellation, expiry,
+eviction and graceful shutdown clean up owned queue items.
+
+Job tracking remains in memory: an app restart requires preparing the file again.
+An abrupt process kill can leave items on Plex until Plex expires them. Retention
+uses Plex's download staging storage; LibraryDownloadarr stores no extra media
+copy and requires no additional volume. Reuse on the user's authenticated PMS
+still needs deployment validation; automated tests use a simulated Plex server.
 
 ## Troubleshooting
 
@@ -121,8 +142,8 @@ The operator reported successful authenticated transcoded downloads on
 Arc A310 assigned to Plex. This is an operator report, not an independent claim
 that every profile, hardware path or permission scenario was tested on that NAS.
 
-Automated validation uses 34 backend tests with a simulated Plex HTTP server and
-real Express routes, plus 11 frontend rendering/handler tests. It covers conversion
+Automated validation uses 47 backend tests with a simulated Plex HTTP server and
+real Express routes, plus 17 frontend rendering/handler tests. It covers conversion
 parameters, output guards, ownership, access revocation, queue cleanup, streaming,
 season ZIPs, one-use tickets, identity migration, policy enforcement, address
 selection, redaction, popup isolation and progress reporting. These tests are run during Docker builds.
@@ -174,3 +195,8 @@ remote failure was not reproduced and is not attributed to the worker. The
 bypass removes unnecessary interception; diagnostics are needed from the failing
 installation to identify its cause. Probe:
 https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36307251370
+
+Retention regression tests also cover complete and interrupted retries, browser
+disconnects, cache isolation, current policies, changed source/audio selection,
+expiry, eviction, concurrent requests and repeated ZIP transfers. They use mock
+Plex, not the user's live server.
