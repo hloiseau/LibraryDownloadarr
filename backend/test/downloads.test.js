@@ -5,6 +5,7 @@ const http = require('node:http');
 const express = require('express');
 const { DownloadService, downloadCredentials, verifyDecision } = require('../dist/services/downloadService');
 const { createDownloadsRouter } = require('../dist/routes/downloads');
+const { logger } = require('../dist/utils/logger');
 
 const mp4 = Buffer.from('\x00\x00\x00\x18ftypmp42MOCK-CONVERTED-MEDIA');
 const decision = (quality = '720p-2') => ({ MediaContainer: {
@@ -85,6 +86,8 @@ async function fixture(t, options = {}) {
       return send(result);
     }
     if (action === 'media') {
+      if (state.mediaStatus) return send({ token: 'upstream-secret' }, state.mediaStatus);
+      if (state.streamMedia) return state.streamMedia(req, res);
       res.writeHead(200, { 'Content-Type': state.playlist ? 'application/vnd.apple.mpegurl' : 'video/mp4',
         'Content-Length': state.huge ? '50000000000' : String(mp4.length) });
       return res.end(mp4);
@@ -310,8 +313,54 @@ async function application(t, f) {
   t.after(() => new Promise(resolve => server.close(resolve)));
   const call = (path, options = {}, user = 'alice') => fetch(`${url}/api/downloads${path}`, { ...options,
     headers: { Authorization: `Bearer session-${user}`, 'Content-Type': 'application/json', ...options.headers } });
-  return { call, sessions, logs, settings };
+  return { call, sessions, logs, settings, url };
 }
+
+test('transfer diagnostics identify shared-user Plex refusal without credentials', async t => {
+  const warnings = [];
+  t.mock.method(logger, 'warn', message => warnings.push(message));
+  const f = await fixture(t, { status: 'available', mediaStatus: 403 });
+  const app = await application(t, f);
+  const job = await (await app.call('', { method: 'POST', body: JSON.stringify(request) })).json();
+  const { ticket } = await (await app.call(`/${job.id}/ticket`, { method: 'POST' })).json();
+  const response = await app.call(`/${job.id}/file`, { method: 'POST', body: JSON.stringify({ ticket }) });
+  assert.equal(response.status, 403);
+  assert.match((await response.json()).error, /Plex denied/);
+  const message = warnings.find(message => message.startsWith('Converted download failed '));
+  const details = JSON.parse(message.slice('Converted download failed '.length));
+  assert.equal(details.jobId, job.id);
+  assert.equal(details.stage, 'open-plex-file');
+  assert.equal(details.upstreamStatus, 403);
+  assert.equal(details.bytesSent, 0);
+  assert.doesNotMatch(message, /shared-token|other-token|admin-token|upstream-secret|session-alice|http:/);
+  assert.ok(f.requests.every(r => r.token === 'shared-token'));
+  assert.equal(app.logs.length, 0);
+});
+
+test('a Plex stream cut short is logged with byte counts and cleaned up', async t => {
+  const warnings = [];
+  t.mock.method(logger, 'warn', message => warnings.push(message));
+  const f = await fixture(t, { status: 'available', streamMedia: (_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': mp4.length * 2 });
+    res.write(mp4);
+    setTimeout(() => res.destroy(), 40);
+  } });
+  const app = await application(t, f);
+  const job = await (await app.call('', { method: 'POST', body: JSON.stringify(request) })).json();
+  const { ticket } = await (await app.call(`/${job.id}/ticket`, { method: 'POST' })).json();
+  const response = await app.call(`/${job.id}/file`, { method: 'POST', body: JSON.stringify({ ticket }) });
+  assert.equal(response.status, 200);
+  await assert.rejects(response.arrayBuffer());
+  const message = warnings.find(message => message.startsWith('Converted download failed '));
+  const details = JSON.parse(message.slice('Converted download failed '.length));
+  assert.equal(details.stage, 'stream-mp4');
+  assert.equal(details.bytesSent, mp4.length);
+  assert.equal(details.expectedBytes, mp4.length * 2);
+  assert.equal(details.responseFinished, false);
+  assert.equal(app.logs.length, 0);
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.ok([...f.queues.values()].every(queue => !queue.items.length));
+});
 
 test('native ticket streams a file, is single-use and respects session revocation', async t => {
   const f = await fixture(t, { status: 'available' });

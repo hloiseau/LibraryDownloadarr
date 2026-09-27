@@ -127,8 +127,8 @@ session access or administrator token is needed. For seasons, progress is
 weighted by episode duration when all durations are available, otherwise by file
 count. Missing percentages use an indeterminate animation instead of invented
 progress. Only verified ready files reach 100%; transfer after Save file is
-tracked by the browser's download manager. Regression coverage includes 34 backend
-tests and 11 frontend tests; the progress UI is not yet independently tested on
+tracked by the browser's download manager. Regression coverage includes 36 backend
+tests and 14 frontend tests; the progress UI is not yet independently tested on
 the live NAS.
 
 Select Original, 720p / 2 Mbps, 720p / 4 Mbps or 1080p / 8 Mbps on a media page.
@@ -275,3 +275,34 @@ URL. They run in the Docker build and do not use a live Plex account.
 References:
 - https://developer.plex.tv/pms/ (Download Queue and Profile Augmentations)
 - https://apps.truenas.com/managing-apps/installing-custom-apps/
+
+## Native download diagnostics and TrueNAS updates
+
+The deployment examples now follow `quality-preview`, so TrueNAS can detect
+image updates and offer its Update action. See `deploy/TRUENAS-CADDY.md` for the
+one-time change from a pinned digest and rollback instructions.
+
+API requests and native file POSTs now bypass the service worker entirely.
+Previously its network-only handler still intercepted them via
+`respondWith(fetch(request))`. The worker cache version is bumped for activation.
+The app retains its normal shell caching; private API responses never enter it.
+
+Transfer diagnostics report started/completed/failed, stage, HTTP status from
+Plex if available, a bounded network code, elapsed milliseconds, and bytes passed
+to the HTTP response. They do not log credentials, URLs, or media titles and
+are visible in container console logs. Bytes passed to Caddy do not prove that
+the browser has saved the file.
+
+Validation: 36 backend tests (including a shared-user Plex 403 and a truncated
+stream), 14 frontend tests, and both builds. A separate test sent 32 MiB through
+real Caddy and the actual router/service with mock Plex and a shared account,
+paused the receiving client for 35 seconds, then verified the complete SHA-256.
+It completed in about 40 seconds. This does not reproduce the user's Internet
+connection or prove the cause of their friend's failure.
+
+A real Chrome probe also completed a 4 MiB native POST download with the old
+worker and with the bypass, both under service-worker control. Thus the reported
+remote failure was not reproduced and is not attributed to the worker. The
+bypass removes unnecessary interception; diagnostics are needed from the failing
+installation to identify its cause. Probe:
+https://github.com/hloiseau/LibraryDownloadarr/actions/runs/36307251370

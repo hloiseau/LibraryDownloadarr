@@ -1,15 +1,45 @@
 # Installation TrueNAS 25.10 et Caddy
 
-Le Compose `truenas-compose.yaml` utilise l'image `c13399c` avec les barres de
-progression de conversion, validée par 45 tests automatisés et le build Docker.
-Elle prolonge la version dont le téléchargement a été confirmé fonctionnel le
-26 septembre 2026. L'affichage de progression sur le NAS reste à confirmer.
-Son digest est épinglé : une nouvelle publication de `quality-preview` ne la
-remplacera pas implicitement.
+Le Compose suit le tag public `ghcr.io/hloiseau/librarydownloadarr:quality-preview`.
+Les publications de la branche du fork mettent ce tag à jour après les tests et
+le build Docker. TrueNAS peut détecter les changements et proposer **Update**.
 
-Pour mettre à jour l'application déjà installée, remplacer uniquement sa ligne
-`image:` par celle du Compose, puis enregistrer et rafraîchir le navigateur.
-Conserver le nom de l'application, ses volumes, son IP et son domaine.
+## Mise à jour depuis TrueNAS
+
+Pour l'application déjà installée, faire une seule modification dans
+**Apps → LibraryDownloadarr → Edit** : remplacer la ligne `image:` épinglée
+sur `@sha256:…` par :
+
+```yaml
+image: ghcr.io/hloiseau/librarydownloadarr:quality-preview
+```
+
+Enregistrer avec **Update**, puis rafraîchir la page de LibraryDownloadarr.
+Conserver le nom de l'application, ses volumes, son IP, son domaine et tous
+les autres réglages. Ne pas réinstaller l'application.
+
+Dans **Apps → Configuration → Settings**, laisser **Check for docker image
+updates** activé. Lors des publications suivantes, après détection par TrueNAS,
+utiliser **Apps → LibraryDownloadarr → ⋮ → Update**. Le bouton n'apparaît que
+si une nouvelle image est détectée ; la détection n'est pas instantanée.
+Aucun service de mise à jour supplémentaire n'est nécessaire.
+
+Le téléchargement de l'image et le remplacement du conteneur passent par
+TrueNAS. Cette configuration n'installe pas de nouvelle version pendant qu'un
+transfert est en cours sans action de l'administrateur. Attendre la fin des
+conversions et téléchargements avant de cliquer sur Update.
+
+Si l'installation est exactement en **25.10.0**, les correctifs de **25.10.0.1**
+résolvent des erreurs de mise à jour des applications personnalisées.
+
+Pour revenir à la version testée avant ces diagnostics (barres de conversion),
+remplacer temporairement la ligne par :
+
+```yaml
+image: ghcr.io/hloiseau/librarydownloadarr@sha256:2ce1026be6c86110a48e918175abe76df4ab4b0bd81628a144a0361858361992
+```
+
+Ce retour fige à nouveau l'image et désactive le suivi des nouvelles publications.
 
 ## TrueNAS
 
@@ -69,3 +99,32 @@ Sources :
 - https://apps.truenas.com/managing-apps/installing-custom-apps/
 - https://caddyserver.com/docs/caddyfile/directives/reverse_proxy
 - https://support.plex.tv/articles/transcoder/
+
+## Échec après « Save file »
+
+Après mise à jour, fermer les onglets de LibraryDownloadarr et rouvrir le site
+pour charger la nouvelle version du service worker. Les transferts de fichiers
+passent maintenant directement par le navigateur, sans interception du worker.
+
+Le navigateur télécharge depuis le même domaine que LibraryDownloadarr. Les
+fichiers Plex transitent par l'application et Caddy ; le navigateur n'a pas
+besoin d'accéder à l'adresse interne de Plex. Une réussite en local ne permet
+pas à elle seule de distinguer un problème de réseau d'un problème de compte.
+
+La console de l'application contient maintenant des lignes `Converted download
+started`, `Converted download transferred` ou `Converted download failed`.
+L'échec indique l'étape, le statut HTTP de Plex s'il est disponible, le code
+réseau, la durée et les octets envoyés au proxy. Ces octets ne prouvent pas que
+le navigateur a enregistré le fichier. Les traces ne contiennent ni les tokens,
+ni les URL de Plex, ni les titres des médias.
+
+Pour diagnostiquer un échec, relever le message exact du gestionnaire de
+téléchargements du navigateur, l'heure de l'essai et les lignes `Converted
+download` correspondantes dans **Apps → LibraryDownloadarr → Workloads → Logs**.
+Si aucune ligne `started` n'apparaît, le transfert n'a pas atteint le gestionnaire
+authentifié : examiner alors la réponse HTTP et les journaux du proxy.
+
+Références pour les mises à jour :
+- https://www.truenas.com/docs/scale/25.10/scaleuireference/apps/
+- https://apps.truenas.com/managing-apps/managing-installed-apps/
+- https://www.truenas.com/docs/scale/25.10/gettingstarted/versionnotes/
