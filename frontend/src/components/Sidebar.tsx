@@ -73,6 +73,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             🏠 Home
           </button>
 
+          <button onClick={() => handleNavigate('/downloads')}
+            className={`w-full text-left px-4 py-2 rounded-lg transition-colors ${isActive('/downloads') ? 'bg-dark-200 text-primary-400' : 'hover:bg-dark-200'}`}>
+            ↓ Downloads
+          </button>
+
           {user?.isAdmin && (
             <>
               <button onClick={() => handleNavigate('/admin/permissions')} className={`w-full text-left px-4 py-2 rounded-lg ${isActive('/admin/permissions') ? 'bg-dark-200 text-primary-400' : 'hover:bg-dark-200'}`}>Download permissions</button>
@@ -82,7 +87,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                   isActive('/admin/download-history') ? 'bg-dark-200 text-primary-400' : 'hover:bg-dark-200'
                 }`}
               >
-                📊 Download History
+                📊 All download history
               </button>
               <button
                 onClick={() => handleNavigate('/admin/logs')}

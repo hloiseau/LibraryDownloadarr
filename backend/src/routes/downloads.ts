@@ -30,6 +30,10 @@ export function createDownloadsRouter(db: DatabaseService, service = new Downloa
     res.setHeader('Referrer-Policy', 'no-referrer');
     next();
   });
+  router.get('/', auth, async (req: AuthRequest, res) => {
+    try { res.json({ jobs: await service.list(req.user!.id, credentials(req)) }); }
+    catch (error) { failure(res, error); }
+  });
   router.post('/', auth, async (req: AuthRequest, res) => {
     try { res.status(202).json(await service.create(req.user!.id, credentials(req), req.body)); }
     catch (error) { failure(res, error); }
@@ -126,7 +130,8 @@ export function createDownloadsRouter(db: DatabaseService, service = new Downloa
         if (first.size) res.setHeader('Content-Length', String(first.size));
         await pipeline(first.stream, meter, res);
       }
-      db.logDownload(req.user!.id, `${transfer.title} [converted]`, transfer.ratingKey, totalSize);
+      db.logDownload(req.user!.id, `${transfer.title} [converted]`, transfer.ratingKey, totalSize,
+        { quality: transfer.quality, status: 'transferred' });
       logger.info(`Converted download transferred ${JSON.stringify({ ...diagnostic, elapsedMs: Date.now() - beganAt })}`);
     } catch (error) {
       // Never serialize the exception: Axios includes Plex credentials, URLs

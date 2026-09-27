@@ -136,8 +136,8 @@ déjà préparé. La conversion reste sur Plex jusqu'à six heures après sa pr�
 y compris après une coupure du téléchargement. Le transfert recommence au début ;
 il ne reprend pas au dernier octet reçu.
 
-Après rechargement de la page, choisir le même film et la même qualité avec le
-même compte retrouve la préparation. Les comptes ne partagent pas leur cache,
+Après rechargement de la page, ouvrir **Downloads** retrouve les préparations.
+Choisir le même film et la même qualité les retrouve également. Les comptes ne partagent pas leur cache,
 et les droits sont revérifiés avant de servir le fichier. Le cache compte au
 maximum deux préparations par compte et huit au total. Les entrées inactives les
 moins récemment utilisées libèrent leur place pour les nouvelles demandes.
@@ -146,3 +146,20 @@ Plex peut expirer un fichier avant cette limite. Un redémarrage ou une mise à 
 de LibraryDownloadarr vide le suivi en mémoire : il faudra alors reconvertir.
 Les fichiers utilisent le stockage temporaire de téléchargement déjà monté dans
 Plex, sans montage supplémentaire pour LibraryDownloadarr.
+
+## File de conversions et historique
+
+Le menu **Downloads** est accessible à tous les comptes connectés. Chacun y trouve
+ses conversions en cours, ses fichiers prêts et son historique personnel. La page
+s'actualise toutes les cinq secondes. **Save file** télécharge un fichier prêt ;
+**Cancel task** annule une tâche et **Remove prepared file** libère son fichier.
+Les conversions continuent après fermeture de la page.
+
+L'historique permet de rechercher un titre et de retourner à sa fiche. Il est
+conservé dans le volume SQLite existant après redémarrage et après expiration
+des fichiers préparés. Aucun volume ni réglage Caddy supplémentaire n'est requis.
+L'historique global de l'administrateur reste disponible séparément.
+
+**Transferred to browser** signifie que le serveur a terminé l'envoi, sans prouver
+l'enregistrement sur le disque du navigateur. Les téléchargements originaux sont
+marqués comme demandés ; les anciens enregistrements gardent un statut neutre.

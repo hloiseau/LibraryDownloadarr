@@ -1,4 +1,4 @@
-import { DownloadQuality, PreparedDownload, DownloadPolicy, PermissionUser, PlexServerChoice } from '../types';
+import { DownloadQuality, PreparedDownload, DownloadHistoryEntry, DownloadPolicy, PermissionUser, PlexServerChoice } from '../types';
 import axios, { AxiosInstance } from 'axios';
 import {
   User,
@@ -171,6 +171,14 @@ class ApiClient {
       params: { limit },
     });
     return response.data.history;
+  }
+
+  async getDownloadHistoryPage(params: { limit: number; offset: number; search: string }): Promise<{ history: DownloadHistoryEntry[]; hasMore: boolean }> {
+    return (await this.client.get('/media/download-history', { params })).data;
+  }
+
+  async listPreparedDownloads(): Promise<PreparedDownload[]> {
+    return (await this.client.get('/downloads')).data.jobs;
   }
 
   async getDownloadStats(): Promise<any> {

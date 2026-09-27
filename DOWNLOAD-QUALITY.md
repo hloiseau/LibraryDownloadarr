@@ -127,8 +127,8 @@ session access or administrator token is needed. For seasons, progress is
 weighted by episode duration when all durations are available, otherwise by file
 count. Missing percentages use an indeterminate animation instead of invented
 progress. Only verified ready files reach 100%; transfer after Save file is
-tracked by the browser's download manager. Regression coverage includes 47 backend
-tests and 17 frontend tests; the progress UI is not yet independently tested on
+tracked by the browser's download manager. Regression coverage includes 52 backend
+tests and 21 frontend tests; the progress UI is not yet independently tested on
 the live NAS.
 
 Select Original, 720p / 2 Mbps, 720p / 4 Mbps or 1080p / 8 Mbps on a media page.
@@ -332,3 +332,29 @@ hits, account/quality isolation, current policies, changed media/audio selection
 concurrent requests, expiry, active-transfer protection and repeated season ZIPs.
 Retry sends a new ticket for the existing job. No claim is made that this fixes
 the separately reported remote browser failure.
+
+## Personal Downloads page
+
+Every signed-in user now has a **Downloads** navigation entry (`/downloads`). It
+shows their conversions and transfers in progress, ready files with **Save file**,
+expiry and removal actions, and a searchable, paginated personal history. Titles
+link back to their media pages. The existing admin global history remains separate.
+
+Conversions continue when the page is closed; returning or refreshing fetches
+the user's server-side queue without preparing again. The page refreshes every
+five seconds. Prepared files retain the existing six-hour, two-per-account/eight-
+overall limits and may disappear earlier through expiry, eviction or app restart.
+Current download rights are checked again before serving bytes.
+
+History is stored in the existing SQLite volume and survives restart. An additive
+migration preserves previous records without guessing their quality or outcome.
+New converted entries include quality and appear after the server finishes
+transferring; original download entries describe a request, not a confirmed save.
+The browser remains authoritative for whether a file was saved on the device.
+
+Validation: 52 backend and 21 frontend tests plus both production builds. New
+coverage includes account isolation, ready/missing/expired queue entries,
+history migration and persistence, literal search and pagination, ordinary-user
+navigation, restoring jobs, fresh-ticket saving, and leaving without cancellation.
+These automated checks use simulated Plex and frontend rendering/handler tests;
+the new page has not yet been validated on the live NAS.

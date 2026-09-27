@@ -344,6 +344,50 @@ test('transfer diagnostics identify shared-user Plex refusal without credentials
   assert.equal(app.logs.length, 0);
 });
 
+test('the downloads page lists only the signed-in account and follows preparation, transfer and removal', async t => {
+  const f = await fixture(t, { session: { progress: 42 } });
+  const app = await application(t, f);
+  const alice = await (await app.call('', { method: 'POST', body: JSON.stringify(request) })).json();
+  const bob = await (await app.call('', { method: 'POST', body: JSON.stringify(request) }, 'bob')).json();
+  const response = await app.call('');
+  assert.match(response.headers.get('cache-control'), /no-store/);
+  let { jobs } = await response.json();
+  assert.deepEqual(jobs.map(job => job.id), [alice.id]);
+  assert.equal(jobs[0].title, 'Title 1');
+  assert.equal(jobs[0].ratingKey, '1');
+  assert.equal(jobs[0].season, false);
+  assert.ok(jobs[0].createdAt <= Date.now());
+  assert.equal(jobs[0].progress, 42);
+  assert.doesNotMatch(JSON.stringify(jobs), /shared-token|other-token|admin-token|client|queueId|sourceSignature/);
+  assert.deepEqual((await (await app.call('', {}, 'bob')).json()).jobs.map(job => job.id), [bob.id]);
+  assert.equal((await app.call('', {}, 'missing')).status, 401);
+  f.state.status = 'available';
+  assert.equal((await (await app.call('')).json()).jobs[0].state, 'ready');
+  const transfer = await f.service.beginTransfer(alice.id, 'alice', f.credentials);
+  assert.equal((await (await app.call('')).json()).jobs[0].state, 'sending');
+  await transfer.finish();
+  assert.equal((await (await app.call('')).json()).jobs[0].state, 'ready');
+  assert.equal(f.requests.filter(req => req.path.endsWith('/add')).length, 2, 'listing/reopening never creates another conversion');
+  assert.equal((await app.call(`/${alice.id}`, { method: 'DELETE' }, 'bob')).status, 404);
+  assert.equal((await app.call(`/${alice.id}`, { method: 'DELETE' })).status, 204);
+  assert.deepEqual((await (await app.call('')).json()).jobs, []);
+  assert.equal((await (await app.call('', {}, 'bob')).json()).jobs.length, 1);
+});
+
+test('the list excludes another server and expired jobs, and exposes missing prepared files as errors', async t => {
+  const f = await fixture(t, { status: 'available', cacheTtlMs: 100 });
+  const job = await f.service.create('alice', f.credentials, request);
+  assert.equal((await f.service.list('alice', f.credentials))[0].state, 'ready');
+  assert.deepEqual(await f.service.list('alice', { ...f.credentials, serverUrl: 'http://another-plex:32400' }), []);
+  f.state.missing = true;
+  const missing = await f.service.list('alice', f.credentials);
+  assert.equal(missing[0].state, 'error');
+  assert.match(missing[0].error, /no longer available/);
+  await assert.rejects(f.service.beginTransfer(job.id, 'alice', f.credentials), { status: 409 });
+  await new Promise(resolve => setTimeout(resolve, 110));
+  assert.deepEqual(await f.service.list('alice', f.credentials), []);
+});
+
 test('a Plex stream cut short is logged and can be retried without conversion', async t => {
   const warnings = [];
   t.mock.method(logger, 'warn', message => warnings.push(message));
@@ -374,6 +418,7 @@ test('a Plex stream cut short is logged and can be retried without conversion', 
   assert.deepEqual(Buffer.from(await retry.arrayBuffer()), mp4);
   assert.equal(f.requests.filter(r => r.path.endsWith('/add')).length, 1);
   assert.equal(app.logs.length, 1);
+  assert.deepEqual(app.logs[0][4], { quality: '720p-2', status: 'transferred' });
 });
 
 test('native ticket streams a file, is single-use and respects session revocation', async t => {

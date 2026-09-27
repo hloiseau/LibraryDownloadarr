@@ -53,7 +53,7 @@ export const PreparationProgress: React.FC<{
       </div>
       {!complete && <p className="text-xs text-gray-400">{active && value === null
         ? 'Plex is converting; the percentage is not available yet.'
-        : 'Keep this tab open. Save the file when it is ready.'}</p>}
+        : 'You can close this page. Find the file in Downloads when it is ready.'}</p>}
     </div>
   );
 };

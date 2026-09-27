@@ -11,6 +11,7 @@ import { Permissions } from './pages/Permissions';
 import { Settings } from './pages/Settings';
 import { SearchResults } from './pages/SearchResults';
 import { DownloadHistory } from './pages/DownloadHistory';
+import { Downloads } from './pages/Downloads';
 import { Logs } from './pages/Logs';
 import { DownloadProvider } from './contexts/DownloadContext';
 import { DownloadManager } from './components/DownloadManager';
@@ -60,7 +61,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <DownloadProvider>
+    <DownloadProvider key={token || 'signed-out'}>
       <BrowserRouter>
         <DownloadManager />
         <Routes>
@@ -111,6 +112,10 @@ const App: React.FC = () => {
                   <SearchResults />
                 </ProtectedRoute>
               }
+            />
+            <Route
+              path="/downloads"
+              element={<ProtectedRoute><Downloads /></ProtectedRoute>}
             />
             <Route
               path="/admin/download-history"
