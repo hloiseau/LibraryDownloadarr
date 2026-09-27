@@ -3,10 +3,11 @@ import { useParams } from 'react-router-dom';
 import { Header } from '../components/Header';
 import { Sidebar } from '../components/Sidebar';
 import { api } from '../services/api';
-import { MediaItem, DownloadQuality, DownloadPolicy } from '../types';
+import { MediaItem, DownloadQuality, DownloadPolicy, DownloadChoice } from '../types';
 import { useDownloads } from '../contexts/DownloadContext';
 import { useMobileMenu } from '../hooks/useMobileMenu';
 import { ProgressBar, preparationLabel } from '../components/PreparationProgress';
+import { DownloadOptionsDialog, DownloadTarget } from '../components/DownloadOptionsDialog';
 
 export const MediaDetail: React.FC = () => {
   const { ratingKey } = useParams<{ ratingKey: string }>();
@@ -20,6 +21,7 @@ export const MediaDetail: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [policy, setPolicy] = useState<DownloadPolicy | null>(null);
+  const [pendingDownload, setPendingDownload] = useState<DownloadTarget | null>(null);
   const [quality, setQuality] = useState<DownloadQuality>(() => {
     const saved = localStorage.getItem('downloadQuality');
     return ['original', '720p-2', '720p-4', '1080p-8'].includes(saved || '') ? saved as DownloadQuality : 'original';
@@ -38,6 +40,7 @@ export const MediaDetail: React.FC = () => {
     if (!ratingKey) return;
 
     setIsLoading(true);
+    setPendingDownload(null);
     setError('');
 
     try {
@@ -93,11 +96,11 @@ export const MediaDetail: React.FC = () => {
 
   // Helper function to check if a download is in progress for a given part
   const isDownloading = (partKey: string): boolean => {
-    return downloads.some(d => d.partKey === partKey && ['downloading', 'preparing', 'ready', 'sending'].includes(d.status));
+    return downloads.some(d => d.partKey === partKey && ['downloading', 'preparing', 'sending'].includes(d.status));
   };
 
   const downloadLabel = (partKey: string): string => {
-    const item = downloads.find(d => d.partKey === partKey);
+    const item = [...downloads].reverse().find(d => d.partKey === partKey);
     if (item?.status === 'preparing') return item.preparationProgress != null
       && ['processing', 'finalizing'].includes(item.preparationStage || '')
       ? `${preparationLabel(item.preparationStage)} ${item.preparationProgress}%` : preparationLabel(item.preparationStage);
@@ -108,17 +111,23 @@ export const MediaDetail: React.FC = () => {
 
   // Helper function to get download progress for a given part
   const getDownloadProgress = (partKey: string): number | null => {
-    const download = downloads.find(d => d.partKey === partKey);
+    const download = [...downloads].reverse().find(d => d.partKey === partKey);
     if (download?.status === 'preparing') return download.preparationProgress || null;
     if (download?.status === 'ready' || download?.status === 'sending') return 100;
     return download?.progress || 0;
   };
 
-  const handleDownload = async (itemRatingKey: string, partKey: string, filename: string, itemTitle: string, fileSize?: number) => {
+  const handleDownload = async (itemRatingKey: string, partKey: string, filename: string, itemTitle: string, fileSize?: number, choice?: DownloadChoice) => {
     if (!canDownload) return;
+    if (!choice && media && ['movie', 'episode', 'season', 'show'].includes(media.type)) {
+      setPendingDownload({ ratingKey: itemRatingKey, partKey, filename, title: itemTitle, fileSize });
+      return;
+    }
+    const selectedQuality = choice?.quality || videoQuality;
+    if (!policy?.qualities.includes(selectedQuality)) return;
     // Check file size and warn if over 10GB
     const tenGB = 10737418240;
-    if (videoQuality === 'original' && fileSize && fileSize > tenGB) {
+    if (selectedQuality === 'original' && fileSize && fileSize > tenGB) {
       const sizeGB = (fileSize / 1073741824).toFixed(2);
       const confirmed = window.confirm(
         `This file is ${sizeGB} GB. Large downloads may take a long time and use significant bandwidth.\n\nDo you want to continue?`
@@ -129,15 +138,21 @@ export const MediaDetail: React.FC = () => {
     }
 
     // Use the global download context with the specific item's rating key
-    await startDownload(itemRatingKey, partKey, filename, itemTitle, videoQuality);
+    await startDownload(itemRatingKey, partKey, filename, itemTitle, selectedQuality, choice);
   };
 
-  const handleSeasonDownload = async (seasonRatingKey: string, seasonTitle: string) => {
+  const handleSeasonDownload = async (seasonRatingKey: string, seasonTitle: string, choice?: DownloadChoice) => {
     if (!canDownload) return;
+    if (!choice) {
+      setPendingDownload({ ratingKey: seasonRatingKey, partKey: api.getSeasonDownloadUrl(seasonRatingKey),
+        filename: `${seasonTitle}.zip`, title: seasonTitle, season: true });
+      return;
+    }
+    if (!policy?.qualities.includes(choice.quality)) return;
     try {
-      if (videoQuality !== 'original') {
+      if (choice.quality !== 'original') {
         await startDownload(seasonRatingKey, api.getSeasonDownloadUrl(seasonRatingKey),
-          `${seasonTitle}.zip`, `${seasonTitle} (Full Season)`, videoQuality);
+          `${seasonTitle}.zip`, `${seasonTitle} (Full Season)`, choice.quality, choice);
         return;
       }
       // Get size info first
@@ -243,6 +258,14 @@ export const MediaDetail: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col">
+      {pendingDownload && <DownloadOptionsDialog target={pendingDownload} initialQuality={quality}
+        allowedQualities={policy?.qualities || []} onClose={() => setPendingDownload(null)}
+        onConfirm={choice => {
+          const target = pendingDownload;
+          setPendingDownload(null); setQuality(choice.quality); localStorage.setItem('downloadQuality', choice.quality);
+          if (target.season) void handleSeasonDownload(target.ratingKey, target.title, choice);
+          else void handleDownload(target.ratingKey, target.partKey, target.filename, target.title, target.fileSize, choice);
+        }} />}
       <Header onMenuClick={toggleMobileMenu} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar isOpen={isMobileMenuOpen} onClose={closeMobileMenu} />
@@ -334,9 +357,8 @@ export const MediaDetail: React.FC = () => {
                         </select>
                         {quality !== 'original' && (
                           <p className="text-xs text-gray-400 max-w-lg">
-                            Plex prepares an MP4 before you save it. The selected audio and subtitles follow your Plex preferences;
-                            selected subtitles are burned in. Sizes shown below are for the original files.
-                            Keep this page open during preparation.
+                            Choose audio and subtitles in the download options. Plex prepares an MP4 with one audio track;
+                            selected subtitles are burned in. Sizes below are for the originals. You can close this page and follow preparation in Downloads.
                           </p>
                         )}
                       </div>

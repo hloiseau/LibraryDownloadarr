@@ -1,6 +1,8 @@
 import axios, { AxiosInstance } from 'axios';
 import { randomUUID } from 'crypto';
 import { Readable } from 'stream';
+import { StreamSelection, StreamSource, ResolvedStreams, validSelection, explicitSelection,
+  streamOptions, resolveStreams, selectionApplied, decisionMatchesStreams } from './downloadStreams';
 
 export const DOWNLOAD_PROFILES = {
   '720p-2': { label: '720p · 2 Mbps', width: 1280, height: 720, bitrate: 2000 },
@@ -12,7 +14,7 @@ export interface DownloadCredentials {
   serverUrl: string; token: string;
   authorize?: (quality: DownloadQuality, metadata: any, container: any) => void;
 }
-export interface DownloadRequest { ratingKey: string; quality: DownloadQuality; partKey?: string; season?: boolean }
+export interface DownloadRequest extends StreamSelection { ratingKey: string; quality: DownloadQuality; partKey?: string; season?: boolean }
 export class DownloadError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
@@ -23,6 +25,7 @@ interface QueueFile {
   stage: 'deciding' | 'waiting' | 'processing' | 'available';
   progress: number | null;
   sourceSignature: string;
+  streams?: ResolvedStreams;
 }
 interface DownloadJob {
   id: string;
@@ -46,6 +49,9 @@ interface DownloadJob {
   retained: boolean;
   season: boolean;
   createdAt: number;
+  selection: StreamSelection;
+  audioLabel: string;
+  subtitleLabel: string;
   removing?: Promise<void>;
 }
 export interface DownloadSnapshot {
@@ -64,6 +70,8 @@ export interface DownloadSnapshot {
   error?: string;
   expiresAt: number;
   reused?: boolean;
+  audioLabel: string;
+  subtitleLabel: string;
 }
 
 function transcodeProgress(entry: any): number | null {
@@ -132,10 +140,12 @@ const positiveId = (value: unknown): number => {
   return n;
 };
 const safeFilename = (value: string) => value.replace(/[<>:"/\\|?*\x00-\x1f\x7f]/g, '_').slice(0, 150) || 'download';
-const sourceSignature = (metadata: any): string => JSON.stringify((metadata.Media || []).map((media: any) =>
+const sourceSignature = (metadata: any, selection: StreamSelection = {}): string => JSON.stringify((metadata.Media || []).map((media: any) =>
   [media.id, (media.Part || []).map((part: any) => [part.id, part.key, part.size, part.duration,
     (part.Stream || []).filter((stream: any) => [2, 3].includes(Number(stream.streamType)))
-      .map((stream: any) => [stream.id, stream.streamType, stream.selected])])]
+      .map((stream: any) => [stream.id, stream.streamType,
+        explicitSelection(Number(stream.streamType) === 2 ? { audio: selection.audio } : { subtitle: selection.subtitle }) ? null : stream.selected,
+        stream.codec, stream.languageTag, stream.languageCode, stream.channels, stream.title])])]
 ));
 const normalizeServer = (value: string) => {
   const url = new URL(value.includes('://') ? value : `http://${value}`);
@@ -198,6 +208,7 @@ export class DownloadService {
   private jobs = new Map<string, DownloadJob>();
   private reservations = new Map<string, number>();
   private creations = new Map<string, Promise<DownloadSnapshot>>();
+  private ownerLocks = new Map<string, Promise<void>>();
   private reservationLock = Promise.resolve();
   private timer: NodeJS.Timeout;
   constructor(private ttlMs = 24 * 60 * 60 * 1000, private cacheTtlMs = 6 * 60 * 60 * 1000) {
@@ -220,6 +231,7 @@ export class DownloadService {
           job.files.reduce((sum, file) => sum + weight(file), 0)));
     return { id: job.id, title: job.title, ratingKey: job.ratingKey, createdAt: job.createdAt, season: job.season,
       quality: job.quality, filename: job.filename, state: job.state,
+      audioLabel: job.audioLabel, subtitleLabel: job.subtitleLabel,
       readyCount: job.readyCount, fileCount: job.files.length, stage, progress, error: job.error, expiresAt: job.expiresAt };
   }
   private owned(id: string, owner: string): DownloadJob {
@@ -234,18 +246,53 @@ export class DownloadService {
     job.client.defaults.headers['X-Plex-Token'] = credentials.token;
   }
 
-  async create(owner: string, credentials: DownloadCredentials, input: DownloadRequest): Promise<DownloadSnapshot> {
+  private validateRequest(input: DownloadRequest): void {
     if (!input || typeof input.ratingKey !== 'string' || !/^\d+$/.test(input.ratingKey) ||
         typeof input.quality !== 'string' || !Object.prototype.hasOwnProperty.call(DOWNLOAD_PROFILES, input.quality) ||
         (input.partKey !== undefined && typeof input.partKey !== 'string') ||
-        (input.season !== undefined && typeof input.season !== 'boolean')) {
+        (input.season !== undefined && typeof input.season !== 'boolean') || !validSelection(input)) {
       throw new DownloadError(400, 'Choose a supported quality and media item.');
     }
+  }
+
+  async options(credentials: DownloadCredentials, input: DownloadRequest) {
+    this.validateRequest(input);
+    const client = plexClient(credentials, randomUUID());
+    const { items, mediaIndex, partIndex } = await this.loadMedia(client, credentials, input);
+    return streamOptions(this.sources(items, mediaIndex, partIndex, !!input.season), !!input.season);
+  }
+
+  private sources(items: any[], mediaIndex: number, partIndex: number, season: boolean): StreamSource[] {
+    return items.map(metadata => {
+      const media = metadata.Media?.[mediaIndex];
+      if ((season || partIndex < 0) && media?.Part?.length !== 1) {
+        throw new DownloadError(400, 'Select an individual file to choose tracks for multi-part media.');
+      }
+      const index = partIndex < 0 ? 0 : partIndex;
+      const part = media?.Part?.[index];
+      if (!part) throw new DownloadError(400, 'The selected media file is unavailable.');
+      return { metadata, part, mediaIndex, partIndex: index };
+    });
+  }
+
+  private async serialized<T>(key: string, action: () => Promise<T>): Promise<T> {
+    const previous = this.ownerLocks.get(key) || Promise.resolve();
+    let unlock!: () => void;
+    const pending = new Promise<void>(resolve => { unlock = resolve; });
+    this.ownerLocks.set(key, pending);
+    await previous;
+    try { return await action(); }
+    finally { unlock(); if (this.ownerLocks.get(key) === pending) this.ownerLocks.delete(key); }
+  }
+
+  async create(owner: string, credentials: DownloadCredentials, input: DownloadRequest): Promise<DownloadSnapshot> {
+    this.validateRequest(input);
     const key = JSON.stringify([owner, normalizeServer(credentials.serverUrl), input.ratingKey,
-      input.quality, !!input.season, input.season ? null : input.partKey || null]);
+      input.quality, !!input.season, input.season ? null : input.partKey || null, input.audio || 'plex', input.subtitle || 'plex']);
     const pending = this.creations.get(key);
     if (pending) return pending;
-    const creation = this.createOrReuse(owner, credentials, input, key);
+    const creation = this.serialized(JSON.stringify([owner, normalizeServer(credentials.serverUrl)]),
+      () => this.createOrReuse(owner, credentials, input, key));
     this.creations.set(key, creation);
     try { return await creation; }
     finally { this.creations.delete(key); }
@@ -277,50 +324,45 @@ export class DownloadService {
     const client = plexClient(credentials, id);
     let queueId: number | undefined;
     try {
-      const { data } = await client.get(`/library/metadata/${input.ratingKey}`);
-      const container = data.MediaContainer;
-      const root = container?.Metadata?.[0];
-      if (!root) throw new DownloadError(404, 'Media unavailable for your Plex account.');
-      checkPermission(container, root);
-      credentials.authorize?.(input.quality, root, container);
-      let items = [root];
-      if (input.season) {
-        if (root.type !== 'season') throw new DownloadError(400, 'Select a season.');
-        const response = await client.get(`/library/metadata/${input.ratingKey}/children`, {
-          headers: { 'X-Plex-Container-Start': '0', 'X-Plex-Container-Size': '101' },
-        });
-        checkPermission(response.data.MediaContainer);
-        items = response.data.MediaContainer?.Metadata || [];
-        const total = Number(response.data.MediaContainer?.totalSize ?? items.length);
-        if (!items.length || total !== items.length || items.length > 100) {
-          throw new DownloadError(400, 'This season is empty or too large. Download individual episodes instead.');
-        }
-        // Children responses may omit streams. Capture source/selection details
-        // from the same metadata endpoint used by later reuse and transfer checks.
-        for (let index = 0; index < items.length; index++) {
-          const key = String(items[index].ratingKey);
-          if (!/^\d+$/.test(key)) throw new DownloadError(502, 'Plex returned an invalid episode.');
-          const episode = await client.get(`/library/metadata/${key}`);
-          const metadata = episode.data.MediaContainer?.Metadata?.[0];
-          if (!metadata) throw new DownloadError(403, 'An episode is no longer available.');
-          checkPermission(episode.data.MediaContainer, metadata);
-          credentials.authorize?.(input.quality, metadata, episode.data.MediaContainer);
-          items[index] = metadata;
-        }
+      const { root, items, mediaIndex, partIndex } = await this.loadMedia(client, credentials, input);
+      const selection = { audio: input.audio || 'plex', subtitle: input.subtitle || 'plex' };
+      // Track ids differ per episode. Resolve the whole season before changing
+      // any selection or creating a queue; never substitute a missing language.
+      let resolved: ResolvedStreams[] = items.map(() => ({}));
+      let audioLabel = 'Plex selection', subtitleLabel = 'Plex selection';
+      if (explicitSelection(selection)) {
+        const sources = this.sources(items, mediaIndex, partIndex, !!input.season);
+        try { ({ resolved, audioLabel, subtitleLabel } = resolveStreams(sources, !!input.season, selection)); }
+        catch (error) { throw new DownloadError(400, (error as Error).message); }
       }
-      for (const item of items) {
-        checkPermission({}, item);
-        credentials.authorize?.(input.quality, item, { librarySectionID: root.librarySectionID ?? container.librarySectionID });
-        if (!['movie', 'episode'].includes(item.type) || !/^\d+$/.test(String(item.ratingKey)) || !item.Media?.length) {
-          throw new DownloadError(400, 'Quality selection supports movies and episodes with available media.');
-        }
+      // PMS selections belong to the account. Do not change them underneath a
+      // queued conversion of the same media. Other accounts remain independent.
+      for (const existing of this.jobs.values()) {
+        if (existing.owner !== owner || existing.serverUrl !== normalizeServer(credentials.serverUrl) || existing.removing ||
+            existing.state !== 'preparing' || !(explicitSelection(selection) || explicitSelection(existing.selection)) ||
+            !existing.files.some(file => items.some(item => String(item.ratingKey) === file.ratingKey))) continue;
+        await this.status(existing.id, owner, credentials);
+        if (existing.state === 'preparing') throw new DownloadError(409, 'Another conversion of this media is in progress. Wait for it to finish before choosing different tracks.');
       }
-      let mediaIndex = 0;
-      let partIndex = -1;
-      if (!input.season && input.partKey) {
-        mediaIndex = root.Media.findIndex((m: any) => m.Part?.some((p: any) => p.key === input.partKey));
-        if (mediaIndex < 0) throw new DownloadError(400, 'Selected file does not belong to this media item.');
-        partIndex = root.Media[mediaIndex].Part.findIndex((p: any) => p.key === input.partKey);
+      if (explicitSelection(selection)) {
+        const sources = this.sources(items, mediaIndex, partIndex, !!input.season);
+        for (let index = 0; index < sources.length; index++) {
+          const source = sources[index], chosen = resolved[index];
+          await client.put(`/library/parts/${positiveId(source.part.id)}`, null, { params: {
+            ...(chosen.audioId !== undefined ? { audioStreamID: chosen.audioId } : {}),
+            ...(chosen.subtitleId !== undefined ? { subtitleStreamID: chosen.subtitleId } : {}), allParts: 0,
+          } });
+          const response = await client.get(`/library/metadata/${source.metadata.ratingKey}`);
+          const updated = response.data.MediaContainer?.Metadata?.[0];
+          checkPermission(response.data.MediaContainer, updated);
+          if (!updated) throw new DownloadError(403, 'Media access has been removed.');
+          credentials.authorize?.(input.quality, updated, response.data.MediaContainer);
+          const part = updated.Media?.[source.mediaIndex]?.Part?.[source.partIndex];
+          if (!part || String(part.id) !== String(source.part.id) || !selectionApplied(part, chosen)) {
+            throw new DownloadError(502, 'Plex did not apply the selected audio or subtitles. No conversion was queued.');
+          }
+          items[index] = updated;
+        }
       }
       const queue = await client.post('/downloadQueue');
       queueId = positiveId(queue.data.MediaContainer?.DownloadQueue?.[0]?.id);
@@ -332,11 +374,13 @@ export class DownloadService {
         ).join('+'),
         mediaIndex, partIndex, protocol: 'http', directPlay: 0, directStream: 0, directStreamAudio: 0,
         videoBitrate: profile.bitrate, videoResolution: `${profile.width}x${profile.height}`,
-        audioChannelCount: 2, subtitles: 'burn', advancedSubtitles: 'burn', autoAdjustQuality: 0,
+        audioChannelCount: 2, subtitles: selection.subtitle === 'none' ? 'none' : 'burn', advancedSubtitles: 'burn', autoAdjustQuality: 0,
       } });
       const addedItems = added.data.MediaContainer?.AddedQueueItems;
       if (!Array.isArray(addedItems) || addedItems.length !== items.length) throw new DownloadError(502, 'Plex did not queue all requested files.');
-      const files: QueueFile[] = items.map(item => {
+      const suffix = [selection.audio !== 'plex' ? `Audio ${audioLabel.slice(0, 55)}` : '',
+        selection.subtitle !== 'plex' ? `Subs ${subtitleLabel.slice(0, 55)}` : ''].filter(Boolean).join(' - ');
+      const files: QueueFile[] = items.map((item, index) => {
         const queued = addedItems.find((entry: any) => entry.key === `/library/metadata/${item.ratingKey}`);
         const name = item.type === 'episode'
           ? `${item.grandparentTitle || root.parentTitle || 'Show'} - S${String(item.parentIndex ?? root.index ?? 0).padStart(2, '0')}E${String(item.index ?? 0).padStart(2, '0')} - ${item.title}`
@@ -349,15 +393,15 @@ export class DownloadService {
           ? durationMs / 1000 * (profile.bitrate * 1.5 + 512) * 1000 / 8 + 8 * 1024 * 1024 : undefined;
         return { id: positiveId(queued?.id), ratingKey: String(item.ratingKey), verified: false, maxBytes,
           durationMs: Number.isFinite(durationMs) && durationMs > 0 ? durationMs : undefined,
-          stage: 'deciding', progress: 0, sourceSignature: sourceSignature(item),
-          filename: `${safeFilename(name)} - ${input.quality}.mp4` };
+          stage: 'deciding', progress: 0, sourceSignature: sourceSignature(item, selection), streams: resolved[index],
+          filename: `${safeFilename(name).slice(0, suffix ? 80 : 150)} - ${input.quality}${suffix ? ` - ${safeFilename(suffix)}` : ''}.mp4` };
       });
       if (new Set(files.map(file => file.id)).size !== files.length) throw new DownloadError(502, 'Plex returned duplicate queue items.');
       const job: DownloadJob = { id, owner, client, quality: input.quality, title: root.title,
         ratingKey: input.ratingKey, serverUrl: normalizeServer(credentials.serverUrl), queueId, files,
-        filename: input.season ? `${safeFilename(`${root.parentTitle || 'Show'} - ${root.title}`)} - ${input.quality}.zip` : files[0].filename,
+        filename: input.season ? `${safeFilename(`${root.parentTitle || 'Show'} - ${root.title}`).slice(0, suffix ? 80 : 150)} - ${input.quality}${suffix ? ` - ${safeFilename(suffix)}` : ''}.zip` : files[0].filename,
         state: 'preparing', readyCount: 0, expiresAt: Date.now() + this.ttlMs,
-        cacheKey: key, lastUsedAt: Date.now(), retained: false, season: !!input.season, createdAt: Date.now() };
+        cacheKey: key, lastUsedAt: Date.now(), retained: false, season: !!input.season, createdAt: Date.now(), selection, audioLabel, subtitleLabel };
       this.jobs.set(id, job);
       return this.snapshot(job);
     } catch (error) {
@@ -367,6 +411,55 @@ export class DownloadService {
       const count = (this.reservations.get(owner) || 1) - 1;
       if (count) this.reservations.set(owner, count); else this.reservations.delete(owner);
     }
+  }
+
+  private async loadMedia(client: AxiosInstance, credentials: DownloadCredentials, input: DownloadRequest) {
+    const { data } = await client.get(`/library/metadata/${input.ratingKey}`);
+    const container = data.MediaContainer;
+    const root = container?.Metadata?.[0];
+    if (!root) throw new DownloadError(404, 'Media unavailable for your Plex account.');
+    checkPermission(container, root);
+    credentials.authorize?.(input.quality, root, container);
+    let items = [root];
+    if (input.season) {
+      if (root.type !== 'season') throw new DownloadError(400, 'Select a season.');
+      const response = await client.get(`/library/metadata/${input.ratingKey}/children`, {
+        headers: { 'X-Plex-Container-Start': '0', 'X-Plex-Container-Size': '101' },
+      });
+      checkPermission(response.data.MediaContainer);
+      items = response.data.MediaContainer?.Metadata || [];
+      const total = Number(response.data.MediaContainer?.totalSize ?? items.length);
+      if (!items.length || total !== items.length || items.length > 100) {
+        throw new DownloadError(400, 'This season is empty or too large. Download individual episodes instead.');
+      }
+      // Children responses may omit streams. Capture source/selection details
+      // from the same metadata endpoint used by later reuse and transfer checks.
+      for (let index = 0; index < items.length; index++) {
+        const key = String(items[index].ratingKey);
+        if (!/^\d+$/.test(key)) throw new DownloadError(502, 'Plex returned an invalid episode.');
+        const episode = await client.get(`/library/metadata/${key}`);
+        const metadata = episode.data.MediaContainer?.Metadata?.[0];
+        if (!metadata) throw new DownloadError(403, 'An episode is no longer available.');
+        checkPermission(episode.data.MediaContainer, metadata);
+        credentials.authorize?.(input.quality, metadata, episode.data.MediaContainer);
+        items[index] = metadata;
+      }
+    }
+    for (const item of items) {
+      checkPermission({}, item);
+      credentials.authorize?.(input.quality, item, { librarySectionID: root.librarySectionID ?? container.librarySectionID });
+      if (!['movie', 'episode'].includes(item.type) || !/^\d+$/.test(String(item.ratingKey)) || !item.Media?.length) {
+        throw new DownloadError(400, 'Quality selection supports movies and episodes with available media.');
+      }
+    }
+    let mediaIndex = 0;
+    let partIndex = -1;
+    if (!input.season && input.partKey) {
+      mediaIndex = root.Media.findIndex((m: any) => m.Part?.some((p: any) => p.key === input.partKey));
+      if (mediaIndex < 0) throw new DownloadError(400, 'Selected file does not belong to this media item.');
+      partIndex = root.Media[mediaIndex].Part.findIndex((p: any) => p.key === input.partKey);
+    }
+    return { root, items, mediaIndex, partIndex };
   }
 
   private async reserve(owner: string): Promise<void> {
@@ -410,7 +503,7 @@ export class DownloadService {
       if (!metadata) throw new DownloadError(403, 'Media access has been removed.');
       checkPermission(result.data.MediaContainer, metadata);
       credentials.authorize?.(job.quality, metadata, result.data.MediaContainer);
-      unchanged = unchanged && file.sourceSignature === sourceSignature(metadata);
+      unchanged = unchanged && file.sourceSignature === sourceSignature(metadata, job.selection);
     }
     return unchanged;
   }
@@ -522,6 +615,9 @@ export class DownloadService {
           if (!file.verified) {
             const result = await job.client.get(`/downloadQueue/${job.queueId}/item/${file.id}/decision`);
             verifyDecision(result.data.MediaContainer, job.quality);
+            if (!decisionMatchesStreams(result.data.MediaContainer, file.streams || {})) {
+              throw new DownloadError(502, 'Plex did not confirm the selected audio or subtitles in the converted file. Prepare it again.');
+            }
             file.verified = true;
           }
           ready++;
@@ -551,7 +647,7 @@ export class DownloadService {
   }
 
   async beginTransfer(id: string, owner: string, credentials: DownloadCredentials): Promise<{
-    filename: string; title: string; ratingKey: string; quality: DownloadQuality; files: QueueFile[];
+    filename: string; title: string; ratingKey: string; quality: DownloadQuality; audioLabel: string; subtitleLabel: string; files: QueueFile[];
     open: (file: QueueFile) => Promise<{ stream: Readable; size?: number }>;
     abort: () => void;
     finish: () => Promise<void>;
@@ -574,6 +670,9 @@ export class DownloadService {
       for (const file of job.files) {
         const decision = await job.client.get(`/downloadQueue/${job.queueId}/item/${file.id}/decision`, { signal: transfer.signal });
         verifyDecision(decision.data.MediaContainer, job.quality);
+        if (!decisionMatchesStreams(decision.data.MediaContainer, file.streams || {})) {
+          throw new DownloadError(502, 'Plex did not confirm the selected audio or subtitles. Download stopped.');
+        }
       }
     } catch (error) {
       const safe = downloadFailure(error);
@@ -592,6 +691,7 @@ export class DownloadService {
     }
     return {
       filename: job.filename, title: job.title, ratingKey: job.ratingKey, quality: job.quality, files: job.files,
+      audioLabel: job.audioLabel, subtitleLabel: job.subtitleLabel,
       abort: () => transfer.abort(),
       finish: async () => {
         // Each finalizer belongs to one attempt. An old response must never

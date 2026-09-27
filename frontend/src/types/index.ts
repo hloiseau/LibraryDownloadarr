@@ -79,6 +79,14 @@ export interface Settings {
 }
 
 export type DownloadQuality = 'original' | '720p-2' | '720p-4' | '1080p-8';
+export interface StreamSelection { audio?: string; subtitle?: string }
+export interface DownloadChoice extends StreamSelection { quality: DownloadQuality }
+export interface DownloadStreamOptions {
+  audio: { id: string; label: string }[];
+  subtitle: { id: string; label: string }[];
+  season: boolean;
+  fileCount: number;
+}
 export type PreparationStage = 'deciding' | 'waiting' | 'processing' | 'finalizing' | 'ready';
 export interface PreparedDownload {
   id: string;
@@ -96,6 +104,8 @@ export interface PreparedDownload {
   error?: string;
   expiresAt: number;
   reused?: boolean;
+  audioLabel?: string;
+  subtitleLabel?: string;
 }
 
 export interface DownloadHistoryEntry {
@@ -106,6 +116,8 @@ export interface DownloadHistoryEntry {
   downloaded_at: number;
   quality: DownloadQuality | null;
   transfer_status: 'recorded' | 'requested' | 'transferred';
+  audio_selection?: string | null;
+  subtitle_selection?: string | null;
 }
 
 export interface PlexServerChoice {

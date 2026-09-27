@@ -68,13 +68,15 @@ test('the download provider carries polled preparation progress to the UI until 
     { state: 'ready', stage: 'ready', progress: 100 },
   ];
   let calls = 0;
+  const requests = [];
   const next = async () => ({ id: 'job-1', filename: 'converted.mp4', fileCount: 1, readyCount: 0, ...stages[calls++] });
   const { DownloadProvider } = load('contexts/DownloadContext.tsx', {
-    react, '../services/api': { api: { prepareDownload: next, getPreparedDownload: next } },
+    react, '../services/api': { api: { prepareDownload: input => { requests.push(input); return next(); }, getPreparedDownload: next } },
     '../services/nativeDownload': {},
   }, { setTimeout: callback => setTimeout(callback, 0) });
   const provider = DownloadProvider({ children: null });
-  await provider.props.value.startDownload('1', '/library/parts/1/file.mkv', 'source.mkv', 'Movie', '720p-2');
+  await provider.props.value.startDownload('1', '/library/parts/1/file.mkv', 'source.mkv', 'Movie', '720p-2', { audio: 'stream:102', subtitle: 'none' });
+  assert.equal(requests[0].audio, 'stream:102'); assert.equal(requests[0].subtitle, 'none');
   assert.equal(calls, 4);
   assert.deepEqual(updates.slice(1).map(items => items[0].preparationProgress), [0, 42, 99, 100]);
   assert.equal(downloads[0].status, 'ready');
@@ -292,4 +294,136 @@ test('the page recovers existing jobs, saves without preparation, pages history 
   slots.forEach(slot => slot?.cleanup?.());
   assert.equal(timers.size, 0);
   assert.deepEqual(removals, [], 'leaving the page must not cancel a server conversion');
+});
+
+function optionsDialog(apiImpl, extra = {}) {
+  const slots = [], effects = [], calls = [], confirmations = [];
+  let index = 0, closed = false;
+  const react = { ...React,
+    useState: initial => {
+      const i = index++; if (!(i in slots)) slots[i] = initial;
+      return [slots[i], value => { slots[i] = typeof value === 'function' ? value(slots[i]) : value; }];
+    },
+    useRef: initial => { const i = index++; return slots[i] || (slots[i] = { current: initial }); },
+    useEffect: (fn, deps) => {
+      const i = index++, old = slots[i];
+      if (!old || deps.some((value, n) => value !== old.deps[n])) effects.push(() => {
+        old?.cleanup?.(); slots[i] = { deps, cleanup: fn() };
+      });
+    },
+  };
+  const { DownloadOptionsDialog } = load('components/DownloadOptionsDialog.tsx', {
+    react, '../services/api': { api: { getDownloadStreamOptions: input => { calls.push(input); return apiImpl(input); } } },
+  });
+  const props = { target: { ratingKey: '1', partKey: '/library/parts/1/file.mkv', title: 'Movie' },
+    initialQuality: '720p-2', allowedQualities: ['original', '720p-2', '720p-4'],
+    onClose: () => { closed = true; }, onConfirm: choice => confirmations.push(choice), ...extra };
+  const renderDialog = () => { index = 0; const tree = DownloadOptionsDialog(props); effects.splice(0).forEach(fn => fn()); return tree; };
+  const elements = node => !node || typeof node !== 'object' ? [] : Array.isArray(node) ? node.flatMap(elements)
+    : [node, ...elements(node.props?.children)];
+  const selects = tree => elements(tree).filter(node => node.type === 'select');
+  const submit = tree => elements(tree).find(node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  return { renderDialog, elements, selects, submit, calls, confirmations, closed: () => closed,
+    cleanup: () => slots.forEach(slot => slot?.cleanup?.()) };
+}
+const trackOptions = { audio: [{ id: 'plex', label: 'Plex selection' }, { id: 'stream:102', label: 'French · AAC' }],
+  subtitle: [{ id: 'plex', label: 'Plex selection' }, { id: 'none', label: 'None' }, { id: 'stream:104', label: 'French · Forced' }], fileCount: 1 };
+const settleDialog = () => new Promise(resolve => setImmediate(resolve));
+
+test('download options submit quality, audio and None once, and explain subtitle burn-in and account selection', async () => {
+  const h = optionsDialog(async () => trackOptions);
+  let tree = h.renderDialog();
+  h.submit(tree); assert.equal(h.confirmations.length, 0, 'cannot submit while loading');
+  await settleDialog(); tree = h.renderDialog();
+  const html = renderToStaticMarkup(tree);
+  assert.match(html, /Quality/); assert.match(html, /Audio/); assert.match(html, /Subtitles/);
+  assert.match(html, /cannot be turned off later/); assert.match(html, /Plex account/);
+  h.selects(tree)[1].props.onChange({ target: { value: 'stream:102' } });
+  h.selects(tree)[2].props.onChange({ target: { value: 'none' } });
+  tree = h.renderDialog(); h.submit(tree); h.submit(tree);
+  assert.equal(h.confirmations.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.confirmations[0])), { quality: '720p-2', audio: 'stream:102', subtitle: 'none' });
+  assert.equal(h.calls[0].partKey, '/library/parts/1/file.mkv');
+  h.cleanup();
+});
+
+test('changing quality ignores stale track responses and Original never sends hidden track choices', async () => {
+  const pending = [];
+  const h = optionsDialog(() => new Promise(resolve => pending.push(resolve)));
+  let tree = h.renderDialog();
+  h.selects(tree)[0].props.onChange({ target: { value: '720p-4' } }); tree = h.renderDialog();
+  pending[0](trackOptions); await settleDialog(); tree = h.renderDialog();
+  h.submit(tree); assert.equal(h.confirmations.length, 0);
+  pending[1](trackOptions); await settleDialog(); tree = h.renderDialog();
+  h.selects(tree)[1].props.onChange({ target: { value: 'stream:102' } });
+  h.selects(tree)[0].props.onChange({ target: { value: 'original' } }); tree = h.renderDialog();
+  assert.equal(h.selects(tree)[1].props.disabled, true); assert.equal(h.selects(tree)[2].props.disabled, true);
+  h.submit(tree);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.confirmations)), [{ quality: 'original' }]);
+  assert.equal(h.calls.length, 2);
+  h.cleanup();
+});
+
+test('season options request the entire season; failed loading can be retried or cancelled without preparing', async () => {
+  let attempts = 0;
+  const h = optionsDialog(async () => { if (++attempts === 1) throw Error('offline'); return trackOptions; }, {
+    target: { ratingKey: '100', partKey: '/api/media/season/100/download', title: 'Season', season: true },
+  });
+  h.renderDialog(); await settleDialog(); let tree = h.renderDialog();
+  assert.equal(h.calls[0].season, true); assert.equal(h.calls[0].partKey, undefined);
+  assert.match(renderToStaticMarkup(tree), /every episode/);
+  h.submit(tree); assert.equal(h.confirmations.length, 0);
+  h.elements(tree).find(node => node.type === 'button' && node.props.children === 'Retry loading tracks').props.onClick();
+  h.renderDialog(); await settleDialog(); tree = h.renderDialog();
+  assert.equal(attempts, 2);
+  h.elements(tree).find(node => node.type === 'button' && node.props.children === 'Cancel').props.onClick();
+  assert.equal(h.closed(), true); assert.equal(h.confirmations.length, 0);
+  h.cleanup();
+});
+
+test('the media page opens options for the clicked source and forwards the confirmed tracks and quality', async () => {
+  const slots = [], effects = [], started = [];
+  let index = 0;
+  const react = { ...React,
+    useState: initial => {
+      const i = index++; if (!(i in slots)) slots[i] = typeof initial === 'function' ? initial() : initial;
+      return [slots[i], value => { slots[i] = typeof value === 'function' ? value(slots[i]) : value; }];
+    },
+    useEffect: (fn, deps) => {
+      const i = index++, old = slots[i];
+      if (!old || deps.some((value, n) => value !== old[n])) { slots[i] = deps; effects.push(fn); }
+    },
+  };
+  const Dialog = () => null;
+  const secondPart = '/library/parts/20/file.mkv';
+  const metadata = { ratingKey: '1', title: 'Movie', type: 'movie', librarySectionID: '1', Media: [
+    { videoCodec: 'h264', container: 'mkv', Part: [
+      { key: '/library/parts/10/file.mkv', file: '/media/one.mkv', size: 100 },
+      { key: secondPart, file: '/media/two.mkv', size: 200 },
+    ] },
+  ] };
+  const { MediaDetail } = load('pages/MediaDetail.tsx', {
+    react, 'react-router-dom': { useParams: () => ({ ratingKey: '1' }) },
+    '../components/Header': { Header: () => null }, '../components/Sidebar': { Sidebar: () => null },
+    '../hooks/useMobileMenu': { useMobileMenu: () => ({}) }, '../components/PreparationProgress': {},
+    '../components/DownloadOptionsDialog': { DownloadOptionsDialog: Dialog },
+    '../contexts/DownloadContext': { useDownloads: () => ({ downloads: [{ partKey: secondPart, status: 'ready' }],
+      startDownload: async (...args) => started.push(args) }) },
+    '../services/api': { api: { getMediaMetadata: async () => metadata,
+      getMyDownloadPolicy: async () => ({ enabled: true, libraries: null, qualities: ['720p-2', '720p-4'] }) } },
+  }, { localStorage: { getItem: () => '720p-2', setItem() {} } });
+  const renderPage = async () => { index = 0; const tree = MediaDetail(); effects.splice(0).forEach(fn => fn()); await settleDialog(); return tree; };
+  const elements = node => !node || typeof node !== 'object' ? [] : Array.isArray(node) ? node.flatMap(elements)
+    : [node, ...elements(node.props?.children)];
+  await renderPage(); let tree = await renderPage();
+  const buttons = elements(tree).filter(node => node.type === 'button' && node.props.children === 'Download');
+  assert.equal(buttons.length, 2); assert.equal(buttons[1].props.disabled, false);
+  buttons[1].props.onClick(); tree = await renderPage();
+  assert.equal(started.length, 0);
+  const dialog = elements(tree).find(node => node.type === Dialog);
+  assert.equal(dialog.props.target.partKey, secondPart);
+  const choice = { quality: '720p-4', audio: 'stream:202', subtitle: 'none' };
+  dialog.props.onConfirm(choice); await settleDialog();
+  assert.equal(started.length, 1); assert.equal(started[0][1], secondPart);
+  assert.equal(started[0][4], '720p-4'); assert.deepEqual(started[0][5], choice);
 });

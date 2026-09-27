@@ -74,8 +74,8 @@ ready files report 100%; the browser tracks transfer progress after Save file.
 
 The bitrate is a target and resolution is a maximum. Plex may choose a lower
 resolution at a constrained bitrate. Audio/subtitle selection follows Plex's
-per-user selection; selected subtitles are burned in. This version does not offer
-separate stream selection or preserve all audio/subtitle tracks. Subtitle burn-in
+per-user selection unless explicitly chosen in Download options; selected subtitles
+are burned in. Converted files do not preserve all audio/subtitle tracks. Subtitle burn-in
 and HDR tone mapping can affect conversion speed and hardware use.
 
 The app verifies Plex's decision for transcoding, MP4, H.264, bounded resolution
@@ -142,8 +142,8 @@ The operator reported successful authenticated transcoded downloads on
 Arc A310 assigned to Plex. This is an operator report, not an independent claim
 that every profile, hardware path or permission scenario was tested on that NAS.
 
-Automated validation uses 52 backend tests with a simulated Plex HTTP server and
-real Express routes, plus 21 frontend rendering/handler tests. It covers conversion
+Automated validation uses 58 backend tests with a simulated Plex HTTP server and
+real Express routes, plus 25 frontend rendering/handler tests. It covers conversion
 parameters, output guards, ownership, access revocation, queue cleanup, streaming,
 season ZIPs, one-use tickets, identity migration, policy enforcement, address
 selection, redaction, popup isolation and progress reporting. These tests are run during Docker builds.
@@ -224,3 +224,39 @@ New tests cover account isolation, task lifecycle and missing/expired files,
 history migration/persistence, literal search and pagination, ordinary-user
 navigation, recovering existing jobs and leaving without cancellation. The new
 page has not yet been validated on the live NAS.
+
+## Audio and subtitle selectors
+
+Movie, episode and season download buttons now open an options dialog with
+Quality, Audio and Subtitles together. Choose Plex selection, an available track,
+or None for subtitles. The Original mode keeps embedded tracks unchanged and
+disables these selectors. Cancelling the dialog does not mutate Plex or queue work.
+
+An authenticated read-only options endpoint validates the requested source and
+quality against the caller's permissions. Seasons load full episode metadata and
+offer only unambiguous matching tracks present in every episode; matching includes
+language, title, codec/channels and forced/SDH/commentary flags. Multi-part season
+episodes require individual-file downloads to select tracks.
+
+Explicit choices use PUT /library/parts/{partId} with the requesting user's token
+and allParts=0, then re-read metadata to confirm the selection before queuing.
+This also updates the item's audio/subtitle preference in that Plex account, as
+explained in the dialog. None sets subtitleStreamID=0 and subtitles=none. Output
+remains single-audio MP4 with burned-in subtitles, not multi-track MKV.
+
+Creations serialize by owner/server. Overlapping active conversions cannot have
+their selections changed by another app request. Readiness and transfer checks
+require the requested audio id and burned-subtitle/absence evidence in the queue
+decision; a mismatch stops the download. Current media access and policy remain
+enforced. External changes in a Plex client are outside the app's serialization.
+
+Cache keys, filenames, snapshots and new history records distinguish the choices.
+Explicitly selected cached files remain reusable after later preference changes;
+source identity and stream metadata are still verified. Additive history columns
+retain null labels for legacy records. Cache hits do not reapply preferences.
+
+Validation: 58 backend and 25 frontend tests plus both production builds. New tests
+cover scoped options, exact selection, account isolation, season matching, missing
+tracks, None, concurrent requests, ignored selections, wrong decisions, cache reuse,
+history labels, dialog loading/cancellation/stale responses and media-page routing.
+Tests use simulated Plex; multilingual downloads on the live NAS remain to be tested.

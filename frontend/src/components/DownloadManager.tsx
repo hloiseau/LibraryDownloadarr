@@ -25,6 +25,7 @@ export const DownloadManager: React.FC = () => {
             <div className="flex-1 min-w-0 pr-2">
               <div className="text-sm font-medium truncate">{download.title}</div>
               <div className="text-xs text-gray-400 truncate">{download.filename}</div>
+              {download.audioLabel && <p className="text-xs text-gray-400">Audio: {download.audioLabel} · Subtitles: {download.subtitleLabel}</p>}
             </div>
             <button
               onClick={() => removeDownload(download.id)}

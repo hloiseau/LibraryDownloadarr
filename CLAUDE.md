@@ -851,3 +851,28 @@ converted routes log `transferred` only after pipeline completion. None proves a
 browser disk save. Own history supports bounded limit, offset and literal title
 search. History persists in the existing database volume; job/cache metadata
 remains in memory and is lost on app restart.
+
+## Audio and subtitle selection
+
+Video and season download buttons open DownloadOptionsDialog with quality,
+audio and subtitle selectors. GET `/api/downloads/options` is authenticated and
+read-only, validates the requested quality/part against current policy, and loads
+full episode metadata for seasons. Single files use scoped stream ids; seasons
+offer only unambiguous descriptions common to every first-version episode.
+Multi-part season episodes require selecting individual files instead.
+
+Explicit choices use the documented PUT `/library/parts/{partId}` with the caller's
+token and allParts=0, then verify selection through fresh metadata before queueing.
+This intentionally updates that user's Plex item preferences; the dialog explains
+it. None sets subtitleStreamID=0 and subtitles=none. Converted output remains
+single-audio MP4 with burned subtitles, not a multi-track archive. No extra GPU or
+media mount is required. Original downloads keep embedded tracks unchanged.
+
+Creations serialize per owner/server. Overlapping queued/preparing items cannot
+have their selections changed by another app request. Other users stay isolated.
+Decision checks require explicit audio ids and subtitle burn/absence evidence,
+both on readiness and before serving. Do not silently accept a different track.
+Cache keys include choices; explicit fields ignore mutable Plex selected flags
+in source signatures, while keeping source/stream identity checks. Cached hits
+do not reapply preferences. Labels are included in snapshots, filenames and new
+history columns; old history rows retain null labels.

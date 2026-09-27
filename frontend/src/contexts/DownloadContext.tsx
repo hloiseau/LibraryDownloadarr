@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useRef, useEffect, ReactNode } from 'react';
 import { api } from '../services/api';
 import { savePreparedFile } from '../services/nativeDownload';
-import { DownloadQuality, PreparationStage } from '../types';
+import { DownloadQuality, PreparationStage, StreamSelection } from '../types';
 
 interface Download {
   id: string;
@@ -19,13 +19,15 @@ interface Download {
   fileCount?: number;
   expiresAt?: number;
   reused?: boolean;
+  audioLabel?: string;
+  subtitleLabel?: string;
   error?: string;
   isBulkDownload?: boolean; // True for season/album zips (no progress tracking)
 }
 
 interface DownloadContextType {
   downloads: Download[];
-  startDownload: (ratingKey: string, partKey: string, filename: string, title: string, quality?: DownloadQuality) => Promise<void>;
+  startDownload: (ratingKey: string, partKey: string, filename: string, title: string, quality?: DownloadQuality, selection?: StreamSelection) => Promise<void>;
   savePreparedDownload: (id: string) => Promise<void>;
   removeDownload: (id: string) => void;
 }
@@ -78,7 +80,8 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
     partKey: string,
     filename: string,
     title: string,
-    quality: DownloadQuality = 'original'
+    quality: DownloadQuality = 'original',
+    selection: StreamSelection = {}
   ): Promise<void> => {
     const downloadId = `${ratingKey}-${partKey}-${Date.now()}`;
 
@@ -104,7 +107,7 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
       const preparation: { cancelled: boolean; discard?: boolean; jobId?: string; handedOff?: boolean; ready?: boolean; saving?: boolean } = { cancelled: false };
       preparations.current.set(downloadId, preparation);
       try {
-        let job = await api.prepareDownload({ ratingKey, quality,
+        let job = await api.prepareDownload({ ratingKey, quality, audio: selection.audio, subtitle: selection.subtitle,
           ...(partKey.includes('/season/') ? { season: true } : { partKey }) });
         preparation.jobId = job.id;
         while (!preparation.cancelled) {
@@ -113,6 +116,7 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
             status: job.state === 'sending' ? 'handedOff' : job.state,
             readyCount: job.readyCount, fileCount: job.fileCount, error: job.error,
             expiresAt: job.expiresAt, reused: job.reused ?? d.reused,
+            audioLabel: job.audioLabel, subtitleLabel: job.subtitleLabel,
             preparationStage: job.stage || 'deciding', preparationProgress: job.progress ?? null,
           } : d));
           if (job.state === 'error') {

@@ -23,13 +23,16 @@ test('history migration preserves old rows and persists new quality/status acros
     const old = db.getDownloadHistory('alice')[0];
     assert.equal(old.quality, null);
     assert.equal(old.transfer_status, 'recorded');
-    db.logDownload('alice', 'New conversion', '2', 200, { quality: '720p-2', status: 'transferred' });
+    db.logDownload('alice', 'New conversion', '2', 200, { quality: '720p-2', status: 'transferred', audio: 'French', subtitle: 'None' });
     db.logDownload('alice', 'Original request', '3', 300);
     db.close(); db = new DatabaseService(file);
     const rows = db.getDownloadHistory('alice');
     assert.equal(rows.length, 3);
     assert.equal(rows.find(row => row.media_key === '2').quality, '720p-2');
     assert.equal(rows.find(row => row.media_key === '2').transfer_status, 'transferred');
+    assert.equal(rows.find(row => row.media_key === '2').audio_selection, 'French');
+    assert.equal(rows.find(row => row.media_key === '2').subtitle_selection, 'None');
+    assert.equal(rows.find(row => row.id === 'old').audio_selection, null);
     assert.equal(rows.find(row => row.media_key === '3').transfer_status, 'requested');
     assert.equal(rows.find(row => row.id === 'old').file_size, 100);
   } finally { db?.close(); fs.rmSync(dir, { recursive: true, force: true }); }

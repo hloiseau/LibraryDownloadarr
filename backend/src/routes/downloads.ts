@@ -38,6 +38,13 @@ export function createDownloadsRouter(db: DatabaseService, service = new Downloa
     try { res.status(202).json(await service.create(req.user!.id, credentials(req), req.body)); }
     catch (error) { failure(res, error); }
   });
+  router.get('/options', auth, async (req: AuthRequest, res) => {
+    try {
+      const input = { ratingKey: req.query.ratingKey, quality: req.query.quality, partKey: req.query.partKey,
+        season: req.query.season === undefined ? false : req.query.season === 'true' ? true : req.query.season === 'false' ? false : req.query.season };
+      res.json(await service.options(credentials(req), input as any));
+    } catch (error) { failure(res, error); }
+  });
   router.get('/:id', auth, async (req: AuthRequest, res) => {
     try { res.json(await service.status(req.params.id, req.user!.id, credentials(req))); }
     catch (error) { failure(res, error); }
@@ -131,7 +138,7 @@ export function createDownloadsRouter(db: DatabaseService, service = new Downloa
         await pipeline(first.stream, meter, res);
       }
       db.logDownload(req.user!.id, `${transfer.title} [converted]`, transfer.ratingKey, totalSize,
-        { quality: transfer.quality, status: 'transferred' });
+        { quality: transfer.quality, status: 'transferred', audio: transfer.audioLabel, subtitle: transfer.subtitleLabel });
       logger.info(`Converted download transferred ${JSON.stringify({ ...diagnostic, elapsedMs: Date.now() - beganAt })}`);
     } catch (error) {
       // Never serialize the exception: Axios includes Plex credentials, URLs
