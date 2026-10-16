@@ -511,6 +511,25 @@ test('the downloads page lists only the signed-in account and follows preparatio
   assert.equal((await (await app.call('', {}, 'bob')).json()).jobs.length, 1);
 });
 
+test('list and status withdraw titles when Plex or library policy access is revoked', async t => {
+  const f = await fixture(t, { status: 'available' });
+  const app = await application(t, f);
+  const job = await (await app.call('', { method: 'POST', body: JSON.stringify(request) })).json();
+  assert.equal((await app.call(`/${job.id}`)).status, 200);
+  for (const mode of ['plex', 'policy', 'source']) {
+    f.state.denied = mode === 'plex';
+    f.state.sourceSize = mode === 'source' ? 1234567 : undefined;
+    app.settings['download_policy:alice'] = mode === 'policy'
+      ? JSON.stringify({ enabled: true, qualities: ['720p-2'], libraries: ['other-library'], serverId: 'server-1' }) : '';
+    for (const path of ['', `/${job.id}`]) {
+      const response = await app.call(path);
+      assert.equal(response.status, mode === 'source' ? 409 : 403);
+      assert.doesNotMatch(await response.text(), /Title 1|shared-token|admin-token/);
+    }
+  }
+  assert.equal(f.requests.filter(req => req.path.endsWith('/add')).length, 1);
+});
+
 test('the list excludes another server and expired jobs, and exposes missing prepared files as errors', async t => {
   const f = await fixture(t, { status: 'available', cacheTtlMs: 100 });
   const job = await f.service.create('alice', f.credentials, request);

@@ -31,6 +31,10 @@ RUN npm test && npm run build
 # Production stage
 FROM node:20-alpine
 
+ARG BUILD_REVISION
+ENV BUILD_REVISION=$BUILD_REVISION
+LABEL org.opencontainers.image.revision=$BUILD_REVISION
+
 WORKDIR /app
 
 # Install production dependencies for backend
