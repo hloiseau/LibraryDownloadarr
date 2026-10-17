@@ -555,6 +555,9 @@ export class DownloadService {
   async status(id: string, owner: string, credentials: DownloadCredentials): Promise<DownloadSnapshot> {
     const job = this.owned(id, owner);
     this.authorize(job, credentials);
+    if (!await this.checkAccess(job, credentials)) {
+      throw new DownloadError(409, 'The source media changed. Prepare the download again.');
+    }
     if (job.state === 'preparing') {
       if (!job.refreshing) job.refreshing = this.refresh(job).finally(() => { job.refreshing = undefined; });
       await job.refreshing;

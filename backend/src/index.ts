@@ -16,6 +16,7 @@ import { createMediaRouter } from './routes/media';
 import { createSettingsRouter } from './routes/settings';
 import { createLogsRouter } from './routes/logs';
 import { createDownloadsRouter } from './routes/downloads';
+import { createIntegrationsRouter } from './routes/integrations';
 
 // Initialize database
 const db = new DatabaseService(config.database.path);
@@ -55,6 +56,7 @@ const clientId = db.getSetting('plex_client_identifier') || randomUUID();
 db.setSetting('plex_client_identifier', clientId);
 const plexFlows = new PlexAuthFlows(plexService, clientId);
 app.use('/api/auth', createAuthRouter(db, plexFlows));
+app.use('/api/integrations', createIntegrationsRouter(db));
 app.use('/api/libraries', createLibrariesRouter(db));
 app.use('/api/media', createMediaRouter(db));
 app.use('/api/settings', createSettingsRouter(db, plexFlows));
