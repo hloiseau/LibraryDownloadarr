@@ -172,7 +172,7 @@ in a POST body. Session and Plex tokens never appear in converted download URLs.
 
 There are at most two jobs per user and eight overall; a season is limited to
 100 episodes. Preparation expires after 24 hours. Once ready, a converted file is
-retained on Plex for up to six hours from readiness. Completed and interrupted
+retained on Plex for up to 24 hours from readiness. Completed and interrupted
 transfers release their stream but retain the prepared queue items. **Retry
 download** requests a fresh single-use ticket for the same file, starting the
 transfer from byte zero without reconverting it. The browser's own resume/retry
