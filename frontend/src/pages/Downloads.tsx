@@ -185,7 +185,7 @@ export const Downloads: React.FC = () => {
               <h2 className="text-xl font-semibold">Ready to download</h2>
               {!jobsLoading && (ready.length ? <div className="grid md:grid-cols-2 gap-4">{ready.map(card)}</div>
                 : <p className="text-sm text-gray-400">Your prepared files will appear here.</p>)}
-              <p className="text-xs text-gray-500">Files are kept for up to six hours, unless Plex expires them, space is needed or the app restarts. Saving again uses the prepared file.</p>
+              <p className="text-xs text-gray-500">Files are kept for up to 24 hours, unless Plex expires them, space is needed or the app restarts. Saving again uses the prepared file.</p>
             </section>
             {failed.length > 0 && <section className="space-y-3">
               <h2 className="text-xl font-semibold">Needs attention</h2>

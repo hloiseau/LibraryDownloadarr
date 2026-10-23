@@ -132,7 +132,7 @@ Références pour les mises à jour :
 ## Réessayer sans reconvertir
 
 Après « Save file », le bouton **Retry download** relance le transfert du fichier
-déjà préparé. La conversion reste sur Plex jusqu'à six heures après sa préparation,
+déjà préparé. La conversion reste sur Plex jusqu'à 24 heures après sa préparation,
 y compris après une coupure du téléchargement. Le transfert recommence au début ;
 il ne reprend pas au dernier octet reçu.
 

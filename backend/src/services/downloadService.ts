@@ -211,7 +211,7 @@ export class DownloadService {
   private ownerLocks = new Map<string, Promise<void>>();
   private reservationLock = Promise.resolve();
   private timer: NodeJS.Timeout;
-  constructor(private ttlMs = 24 * 60 * 60 * 1000, private cacheTtlMs = 6 * 60 * 60 * 1000) {
+  constructor(private ttlMs = 24 * 60 * 60 * 1000, private cacheTtlMs = 24 * 60 * 60 * 1000) {
     this.timer = setInterval(() => { void this.sweep(); }, 60000);
     this.timer.unref();
   }
